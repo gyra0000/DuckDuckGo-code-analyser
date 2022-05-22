@@ -17,13 +17,11 @@
 //  limitations under the License.
 //
 
-
 import Foundation
 
-public struct Atb {
-    
-    public static let variant = "mi"
+public struct Atb: Decodable {
 
     let version: String
+    let updateVersion: String?
 
 }

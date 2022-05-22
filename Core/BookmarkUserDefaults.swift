@@ -17,17 +17,22 @@
 //  limitations under the License.
 //
 
-
 import Foundation
 
+// This is no longer how bookmarks are stored. It is kept only so old data can be migrated
 public class BookmarkUserDefaults: BookmarkStore {
+    
+    public struct Notifications {
+        public static let bookmarkStoreDidChange = Notification.Name("com.duckduckgo.bookmarks.storeDidChange")
+    }
 
     public struct Constants {
-        public static let groupName = "group.com.duckduckgo.bookmarks"
+        public static let groupName = "\(Global.groupIdPrefix).bookmarks"
     }
-    
+
     private struct Keys {
         static let bookmarkKey = "com.duckduckgo.bookmarks.bookmarkKey"
+        static let favoritesKey = "com.duckduckgo.bookmarks.favoritesKey"
     }
 
     private let userDefaults: UserDefaults
@@ -35,41 +40,57 @@ public class BookmarkUserDefaults: BookmarkStore {
     public init(userDefaults: UserDefaults = UserDefaults(suiteName: Constants.groupName)!) {
         self.userDefaults = userDefaults
     }
-    
-    public var bookmarks: [Link]? {
+
+    public var bookmarks: [Link] {
         get {
             if let data = userDefaults.data(forKey: Keys.bookmarkKey) {
-                return NSKeyedUnarchiver.unarchiveObject(with: data) as? [Link]
+                return (try? NSKeyedUnarchiver.unarchiveTopLevelObjectWithData(data) as? [Link]) ?? []
             }
-            return nil
+            return []
         }
         set(newBookmarks) {
-            if let newBookmarks = newBookmarks {
-                let data = NSKeyedArchiver.archivedData(withRootObject: newBookmarks)
-                userDefaults.set(data, forKey: Keys.bookmarkKey)
-            }
+            guard let data = try? NSKeyedArchiver.archivedData(withRootObject: newBookmarks, requiringSecureCoding: false) else { return }
+            userDefaults.set(data, forKey: Keys.bookmarkKey)
+            NotificationCenter.default.post(name: Notifications.bookmarkStoreDidChange, object: self)
         }
     }
-    
+
+    public var favorites: [Link] {
+        get {
+            if let data = userDefaults.data(forKey: Keys.favoritesKey) {
+                return (try? NSKeyedUnarchiver.unarchiveTopLevelObjectWithData(data) as? [Link]) ?? []
+            }
+            return []
+        }
+        set(newFavorites) {
+            guard let data = try? NSKeyedArchiver.archivedData(withRootObject: newFavorites, requiringSecureCoding: false) else { return }
+            userDefaults.set(data, forKey: Keys.favoritesKey)
+            NotificationCenter.default.post(name: Notifications.bookmarkStoreDidChange, object: self)
+        }
+    }
+
     public func addBookmark(_ bookmark: Link) {
-        var newBookmarks = bookmarks ?? [Link]()
+        var newBookmarks = bookmarks
         newBookmarks.append(bookmark)
         bookmarks = newBookmarks
     }
+    
+    public func addFavorite(_ favorite: Link) {
+        var newFavorites = favorites
+        newFavorites.append(favorite)
+        favorites = newFavorites
+    }
 
-    public func updateFavicon(_ favicon: URL, forBookmarksWithUrl url: URL) {
-        guard var newBookmarks = bookmarks else { return }
-        for (index, bookmark) in newBookmarks.enumerated() {
-            if  shouldUpdate(bookmark: bookmark, withFavicon: favicon, fromUrl: url) {
-                newBookmarks.remove(at: index)
-                newBookmarks.insert(Link(title: bookmark.title, url: bookmark.url, favicon: favicon), at: index)
-            }
+    public func contains(domain: String) -> Bool {
+        let domainMatches: (Link) -> Bool = {
+            $0.url.host == domain
         }
-        bookmarks = newBookmarks
+        return bookmarks.contains(where: domainMatches) || favorites.contains(where: domainMatches)
     }
     
-    private func shouldUpdate(bookmark: Link, withFavicon favicon: URL, fromUrl url: URL) -> Bool {
-        return (bookmark.url == url && bookmark.favicon != favicon) ||
-               (bookmark.url.host == url.host && !bookmark.hasFavicon)
+    public func deleteAllData() {
+        bookmarks = []
+        favorites = []
     }
+
 }

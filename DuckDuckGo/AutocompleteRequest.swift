@@ -1,5 +1,5 @@
 //
-//  AutocompleteRequester.swift
+//  AutocompleteRequest.swift
 //  DuckDuckGo
 //
 //  Copyright © 2017 DuckDuckGo. All rights reserved.
@@ -17,29 +17,28 @@
 //  limitations under the License.
 //
 
-
 import Foundation
 import Core
 
 class AutocompleteRequest {
-    
+
     typealias Completion = ([Suggestion]?, Error?) -> Void
-    
+
     private let url: URL
-    private let autocompleteParser: AutocompleteParser
     private var task: URLSessionDataTask?
-    
-    init(query : String, parser: AutocompleteParser) {
+
+    init(query: String) {
         self.url = AppUrls().autocompleteUrl(forText: query)
-        self.autocompleteParser = parser
     }
-    
-    func execute(completion: @escaping Completion)  {
-        let parser = autocompleteParser
-        task = URLSession.shared.dataTask(with: URLRequest(url: url)) { [weak self] (data, response, error) -> Void in
+
+    func execute(completion: @escaping Completion) {
+        var request = URLRequest.developerInitiated(url)
+        request.allHTTPHeaderFields = APIHeaders().defaultHeaders
+
+        task = URLSession.shared.dataTask(with: request) { [weak self] (data, _, error) -> Void in
             guard let weakSelf = self else { return }
             do {
-                let suggestions = try weakSelf.processResult(parser: parser, data: data, error: error)
+                let suggestions = try weakSelf.processResult(data: data, error: error)
                 weakSelf.complete(completion, withSuccess: suggestions)
             } catch {
                 weakSelf.complete(completion, withError: error)
@@ -47,26 +46,40 @@ class AutocompleteRequest {
         }
         task?.resume()
     }
-    
-    private func processResult(parser: AutocompleteParser, data: Data?, error: Error?) throws -> [Suggestion] {
+
+    private func processResult(data: Data?, error: Error?) throws -> [Suggestion] {
         if let error = error { throw error }
         guard let data = data else { throw ApiRequestError.noData }
-        let suggestions = try parser.convert(fromJsonData: data)
-        return suggestions
+        let entries = try JSONDecoder().decode([AutocompleteEntry].self, from: data)
+
+        return entries.compactMap {
+            guard let phrase = $0.phrase else { return nil }
+
+            if let isNav = $0.isNav {
+                // We definitely have a nav indication so use it. Phrase should be a fully qualified URL.
+                //  Assume HTTP and that we'll auto-upgrade if needed.
+                let url = isNav ? URL(string: "http://\(phrase)") : nil
+                return Suggestion(source: .remote, suggestion: phrase, url: url)
+            } else {
+                // We need to infer nav based on the phrase to maintain previous behaviour (ie treat phrase that look like URLs like URLs)
+                let url = URL.webUrl(fromText: phrase)
+                return Suggestion(source: .remote, suggestion: phrase, url: url)
+            }
+        }
     }
-    
+
     private func complete(_ completion: @escaping Completion, withSuccess suggestions: [Suggestion]) {
         DispatchQueue.main.async {
             completion(suggestions, nil)
         }
     }
-    
+
     private func complete(_ completion: @escaping Completion, withError error: Error) {
         DispatchQueue.main.async {
             completion(nil, error)
         }
     }
-    
+
     func cancel() {
         task?.cancel()
     }

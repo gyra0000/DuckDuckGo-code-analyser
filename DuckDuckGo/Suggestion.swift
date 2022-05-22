@@ -17,11 +17,30 @@
 //  limitations under the License.
 //
 
-
 import Foundation
+import Core
 
 struct Suggestion {
+
+    enum Source {
+        case remote
+        case local
+    }
     
-    let type: String
+    let source: Source
     let suggestion: String
+    let url: URL?
+    
+    init(source: Source, suggestion: String, url: URL?) {
+        self.source = source
+        self.suggestion = suggestion
+        self.url = url
+    }
+}
+
+struct AutocompleteEntry: Decodable {
+
+    let phrase: String?
+    let isNav: Bool?
+
 }

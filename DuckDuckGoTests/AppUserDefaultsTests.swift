@@ -17,32 +17,76 @@
 //  limitations under the License.
 //
 
-
 import XCTest
 @testable import DuckDuckGo
 
 class AppUserDefaultsTests: XCTestCase {
 
     let testGroupName = "test"
-    
+
     override func setUp() {
+        super.setUp()
         UserDefaults(suiteName: testGroupName)?.removePersistentDomain(forName: testGroupName)
     }
-    
-    func testAutocompleteSet() {
+
+    func testWhenLinkPreviewsIsSetThenItIsPersisted() {
+
+        let appUserDefaults = AppUserDefaults(groupName: testGroupName)
+        appUserDefaults.longPressPreviews = false
+        XCTAssertFalse(appUserDefaults.longPressPreviews)
+
+    }
+
+    func testWhenSettingsIsNewThenDefaultForHideLinkPreviewsIsTrue() {
+
+        let appUserDefaults = AppUserDefaults(groupName: testGroupName)
+        XCTAssertTrue(appUserDefaults.longPressPreviews)
+
+    }
+
+    func testWhenAllowUniversalLinksIsSetThenItIsPersisted() {
+
+        let appUserDefaults = AppUserDefaults(groupName: testGroupName)
+        appUserDefaults.allowUniversalLinks = false
+        XCTAssertFalse(appUserDefaults.allowUniversalLinks)
+
+    }
+
+    func testWhenSettingsIsNewThenDefaultForAllowUniversalLinksIsTrue() {
         
+        let appUserDefaults = AppUserDefaults(groupName: testGroupName)
+        XCTAssertTrue(appUserDefaults.allowUniversalLinks)
+
+    }
+
+    func testWhenAutocompleteIsSetThenItIsPersisted() {
+
         let appUserDefaults = AppUserDefaults(groupName: testGroupName)
         appUserDefaults.autocomplete = false
         XCTAssertTrue(!appUserDefaults.autocomplete)
+
+    }
+
+    func testWhenReadingAutocompleteDefaultThenTrueIsReturned() {
+
+        let appUserDefaults = AppUserDefaults(groupName: testGroupName)
+        XCTAssertTrue(appUserDefaults.autocomplete)
+
+    }
+    
+    func testWhenCurrentThemeIsSetThenItIsPersisted() {
+        
+        let appUserDefaults = AppUserDefaults(groupName: testGroupName)
+        appUserDefaults.currentThemeName = .light
+        XCTAssertEqual(appUserDefaults.currentThemeName, .light)
         
     }
     
-    func testAutocompleteDefault() {
+    func testWhenReadingCurrentThemeDefaultThenSystemDefaultIsReturned() {
         
         let appUserDefaults = AppUserDefaults(groupName: testGroupName)
-        XCTAssertTrue(appUserDefaults.autocomplete)
         
+        XCTAssertEqual(appUserDefaults.currentThemeName, .systemDefault)
     }
-
     
 }

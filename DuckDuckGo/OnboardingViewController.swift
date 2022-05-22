@@ -2,7 +2,7 @@
 //  OnboardingViewController.swift
 //  DuckDuckGo
 //
-//  Copyright © 2017 DuckDuckGo. All rights reserved.
+//  Copyright © 2019 DuckDuckGo. All rights reserved.
 //
 //  Licensed under the Apache License, Version 2.0 (the "License");
 //  you may not use this file except in compliance with the License.
@@ -17,143 +17,197 @@
 //  limitations under the License.
 //
 
-
 import UIKit
 import Core
 
-class OnboardingViewController: UIViewController, UIPageViewControllerDelegate {
+class OnboardingViewController: UIViewController, Onboarding {
+        
+    private lazy var controllerNames: [String] = {
+        if #available(iOS 14, *) {
+            return ["onboardingDefaultBrowser"]
+        } else {
+            return ["onboardingHomeRow"]
+        }
+    }()
     
-    @IBOutlet weak var pageControl: UIPageControl!
-    @IBOutlet var swipeGestureRecogniser: UISwipeGestureRecognizer!
-    
-    private weak var pageController: UIPageViewController!
-    private var transitioningToPage: OnboardingPageViewController?
-    fileprivate lazy var dataSource: OnboardingDataSource = OnboardingDataSource()
+    @IBOutlet weak var header: UILabel!
+    @IBOutlet weak var subheader: UILabel!
+    @IBOutlet weak var headerContainer: UIView!
+    @IBOutlet weak var subheaderContainer: UIView!
+    @IBOutlet weak var contentWidth: NSLayoutConstraint!
+    @IBOutlet weak var contentContainer: UIView!
+    @IBOutlet weak var skipButton: UIButton!
+    @IBOutlet weak var continueButton: UIButton!
 
-    static func loadFromStoryboard() -> OnboardingViewController {
-        let storyboard = UIStoryboard(name: "Onboarding", bundle: nil)
-        return storyboard.instantiateInitialViewController() as! OnboardingViewController
-    }
+    var contentController: OnboardingContentViewController?
+    
+    private let variantManager = DefaultVariantManager()
+    
+    weak var delegate: OnboardingDelegate?
     
     override func viewDidLoad() {
         super.viewDidLoad()
-        configurePageControl()
-        configureScrollView()
+        loadInitialContent()
+        updateForSmallerScreens()
+        setUpNavigationBar()
     }
     
-    private func configurePageControl() {
-        pageControl.numberOfPages = dataSource.count
-        pageControl.currentPage = 0
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        navigationController?.setNavigationBarHidden(true, animated: false)
     }
     
-    private func configureScrollView() {
-        let scrollView = pageController.view.subviews.filter { $0 is UIScrollView }.first as? UIScrollView
-        scrollView?.delegate = self
+    private func loadInitialContent() {
+        guard let name = controllerNames.first,
+            let controller = storyboard?.instantiateViewController(withIdentifier: name) as? OnboardingContentViewController else {
+                fatalError("Unable to load initial content")
+        }
+        updateContent(controller)
+        controller.view.frame = contentContainer.bounds
+        contentContainer.addSubview(controller.view)
+        addChild(controller)
+        controller.didMove(toParent: self)
+        
+        prepareFor(nextScreen: controller)
+    }
+    
+    private func updateForSmallerScreens() {
+        contentWidth.constant = isSmall ? -52 : -72
+    }
+    
+    private func setUpNavigationBar() {
+        navigationController?.setNavigationBarHidden(true, animated: false)
+        navigationController?.navigationBar.setBackgroundImage(UIImage(), for: UIBarMetrics.default)
+        navigationController?.navigationBar.shadowImage = UIImage()
+    }
+    
+    private func adjustHeight(label: UILabel, toMaxHeight maxHeight: CGFloat) -> CGFloat {
+        guard var fontSize = label.attributedText?.font?.pointSize else { return label.bounds.height }
+        
+        var requiredHeight = label.sizeThatFits(CGSize(width: header.bounds.width, height: 1000)).height
+        
+        while requiredHeight > maxHeight, fontSize > 10 {
+            fontSize -= 1.0
+            label.attributedText = label.attributedText?.stringWithFontSize(fontSize)
+            requiredHeight = label.sizeThatFits(CGSize(width: label.bounds.width, height: 1000)).height
+        }
+        
+        return requiredHeight
+    }
+    
+    override func viewWillLayoutSubviews() {
+        super.viewWillLayoutSubviews()
+        
+        _ = adjustHeight(label: header, toMaxHeight: headerContainer.bounds.height - 10)
+        _ = adjustHeight(label: subheader, toMaxHeight: subheaderContainer.bounds.height - 10)
     }
     
     override func prepare(for segue: UIStoryboardSegue, sender: Any?) {
-        if let controller = segue.destination as? UIPageViewController {
-            prepare(forPageControllerSegue: controller)
+        guard let controller = segue.destination as? OnboardingContentViewController else {
+            fatalError("destination controller is not \(OnboardingContentViewController.self)")
         }
+        updateContent(controller)
     }
-    
-    private func prepare(forPageControllerSegue controller: UIPageViewController) {
-        pageController = controller
-        controller.dataSource = dataSource
+
+    private func updateContent(_ controller: OnboardingContentViewController) {
         controller.delegate = self
-        goToPage(index: 0)
+        continueButton.isEnabled = controller.canContinue
+        contentController = controller
+        header.setAttributedTextString(controller.header)
+        subheader.setAttributedTextString(controller.subtitle ?? "")
+        UIAccessibility.post(notification: UIAccessibility.Notification.screenChanged, argument: header)
     }
     
-    func pageViewController(_ pageViewController: UIPageViewController, willTransitionTo pendingViewControllers: [UIViewController]) {
-        guard let next = pendingViewControllers.first as? OnboardingPageViewController else { return }
-        transitioningToPage = next
-    }
-    
-    func pageViewController(_ pageViewController: UIPageViewController, didFinishAnimating finished: Bool,
-                            previousViewControllers: [UIViewController], transitionCompleted completed: Bool) {
-        if !completed {
-            guard let previous = previousViewControllers.first else { return }
-            guard let index = dataSource.index(of: previous) else { return }
-            configureDisplay(forPage: index)
-        } else {
-            guard let current = transitioningToPage as? UIViewController else { return }
-            guard let index = dataSource.index(of: current) else { return }
-            configureDisplay(forPage: index)
+    @IBAction func next(sender: UIButton) {
+        
+        let navigationHandler = {
+            if let name = self.controllerNames.first,
+                let oldController = self.contentController,
+                let newController = self.storyboard?.instantiateViewController(withIdentifier: name) as? OnboardingContentViewController {
+                
+                self.transition(from: oldController, to: newController)
+            } else {
+                self.done()
+            }
         }
-        transitioningToPage = nil
-    }
-    
-    private func configureDisplay(forPage index: Int) {
-        pageControl.currentPage = index
-        currentPage.resetImage()
-        view.backgroundColor = currentPage.preferredBackgroundColor
-    }
-    
-    fileprivate func transition(withRatio ratio: CGFloat) {
-        transitionBackgroundColor(withRatio: ratio)
-        shrinkImages(withRatio: ratio)
-    }
-    
-    private func transitionBackgroundColor(withRatio ratio: CGFloat) {
-        guard let nextColor = transitioningToPage?.preferredBackgroundColor else { return }
-        let currentColor = currentPage.preferredBackgroundColor
-        view.backgroundColor = currentColor.combine(withColor: nextColor, ratio: ratio)
-    }
-    
-    private func shrinkImages(withRatio ratio: CGFloat) {
-        let currentImageScale = 1 - (0.3 * (1 - ratio))
-        currentPage.scaleImage(currentImageScale)
 
-        let nextImageScale = 1 - (0.3 * ratio)
-        transitioningToPage?.scaleImage(nextImageScale)
+        if sender == continueButton {
+            contentController?.onContinuePressed(navigationHandler: navigationHandler)
+        } else {
+            contentController?.onSkipPressed(navigationHandler: navigationHandler)
+        }
     }
     
-    private func goToPage(index: Int) {
-        let controllers = [dataSource.controller(forIndex: index)]
-        pageController.setViewControllers(controllers, direction: .forward, animated: true, completion: nil)
-        configureDisplay(forPage: index)
+    private func transition(from oldController: OnboardingContentViewController, to newController: OnboardingContentViewController) {
+        let frame = oldController.view.frame
+        
+        newController.view.frame = frame
+        newController.view.center.x += (frame.width * 2.5)
+        
+        oldController.willMove(toParent: nil)
+        addChild(newController)
+        transition(from: oldController, to: newController, duration: 0.6, options: [], animations: {
+            
+            self.header.alpha = 0.0
+            self.subheader.alpha = 0.0
+            oldController.view.center.x -= frame.width * 1.0
+            newController.view.center.x = frame.midX
+            
+        }, completion: { _ in
+            
+            oldController.view.removeFromSuperview()
+            newController.didMove(toParent: self)
+            self.contentContainer.addSubview(newController.view)
+            self.updateContent(newController)
+            self.animateInHeaders()
+        })
+        
+        prepareFor(nextScreen: newController)
     }
     
-    @IBAction func onPageSelected(_ sender: UIPageControl) {
-        goToPage(index: sender.currentPage)
+    private func animateInHeaders() {
+        UIView.animate(withDuration: 0.3) {
+            self.header.alpha = 1.0
+            self.subheader.alpha = 1.0
+        }
     }
     
-    @IBAction func onLastPageSwiped(_ sender: Any) {
-        finishOnboardingFlow()
+    private func prepareFor(nextScreen: OnboardingContentViewController) {
+        controllerNames = [String](controllerNames.dropFirst())
+        
+        let continueButtonTitle = nextScreen.continueButtonTitle
+        continueButton.setTitle(continueButtonTitle, for: .normal)
+        continueButton.setTitle(continueButtonTitle, for: .disabled)
+        continueButton.isEnabled = nextScreen.canContinue
+        
+        let skipButtonTitle = nextScreen.skipButtonTitle
+        skipButton.setTitle(skipButtonTitle, for: .normal)
+        skipButton.setTitle(skipButtonTitle, for: .disabled)
+        skipButton.isHidden = (nextScreen is OnboardingHomeRowViewController)
     }
     
-    private func finishOnboardingFlow() {
-        dismiss(animated: true, completion: nil)
+    func done() {
+        delegate?.onboardingCompleted(controller: self)
     }
 
-    fileprivate var currentController: UIViewController {
-        return dataSource.controller(forIndex: pageControl.currentPage)
+    override var supportedInterfaceOrientations: UIInterfaceOrientationMask {
+        return [ .portrait ]
     }
-    
-    fileprivate var currentPage: OnboardingPageViewController {
-        return currentController as! OnboardingPageViewController
-    }
-}
 
-extension OnboardingViewController: UIGestureRecognizerDelegate {
-    public func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+    override var preferredInterfaceOrientationForPresentation: UIInterfaceOrientation {
+        return .portrait
+    }
+
+    override var shouldAutorotate: Bool {
         return true
     }
     
-    public func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
-        return true
-    }
-    
-    public func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
-        return dataSource.isLastPage(controller: currentController)
-    }
 }
 
-extension OnboardingViewController: UIScrollViewDelegate {
-    func scrollViewDidScroll(_ scrollView: UIScrollView) {
-        let x = scrollView.contentOffset.x
-        var ratio = x / view.bounds.size.width
-        ratio = (ratio > 1) ? 2 - ratio : ratio
-        transition(withRatio: ratio)
+extension OnboardingViewController: OnboardingContentDelegate {
+    
+    func setContinueEnabled(_ enabled: Bool) {
+        continueButton.isEnabled = enabled
     }
+    
 }

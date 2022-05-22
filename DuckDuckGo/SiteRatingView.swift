@@ -17,73 +17,90 @@
 //  limitations under the License.
 //
 
-
 import Foundation
-
 
 import UIKit
 import Core
-
+import BrowserServicesKit
 
 public class SiteRatingView: UIView {
     
+    enum DisplayMode {
+        case loading
+        case ready
+    }
+
+    static let gradeImages: [Grade.Grading: UIImage] = [
+        .a: #imageLiteral(resourceName: "PP Indicator Grade A"),
+        .bPlus: #imageLiteral(resourceName: "PP Indicator Grade B Plus"),
+        .b: #imageLiteral(resourceName: "PP Indicator Grade B"),
+        .cPlus: #imageLiteral(resourceName: "PP Indicator Grade C Plus"),
+        .c: #imageLiteral(resourceName: "PP Indicator Grade C"),
+        .d: #imageLiteral(resourceName: "PP Indicator Grade D"),
+        .dMinus: #imageLiteral(resourceName: "PP Indicator Grade D")
+    ]
+
     @IBOutlet weak var circleIndicator: UIImageView!
-    @IBOutlet weak var gradeLabel: UILabel!
-    
-    private var contentBlockerConfiguration = ContentBlockerConfigurationUserDefaults()
+
     private var siteRating: SiteRating?
+    var mode: DisplayMode = .loading
 
     public required init?(coder aDecoder: NSCoder) {
         super.init(coder: aDecoder)
-        let view = Bundle.main.loadNibNamed("SiteRatingView", owner: self, options: nil)![0] as! UIView
+        guard let view = Bundle.main.loadNibNamed("SiteRatingView", owner: self, options: nil)![0] as? UIView else {
+            fatalError("Failed to load view SiteRatingView")
+        }
         self.addSubview(view)
         view.frame = self.bounds
-        addContentBlockerConfigurationObserver()
-    }
-    
-    public override func layoutSubviews() {
-        super.layoutSubviews()
-        refresh()
-    }
-
-    private func addContentBlockerConfigurationObserver() {
-        NotificationCenter.default.addObserver(self, selector: #selector(onContentBlockerConfigurationChanged), name: ContentBlockerConfigurationChangedNotification.name, object: nil)
-    }
-    
-    @objc func onContentBlockerConfigurationChanged() {
-        refresh()
+        
+        if #available(iOS 13.4, *) {
+            addInteraction(UIPointerInteraction(delegate: self))
+        }
+        
     }
 
-    public func update(siteRating: SiteRating?) {
+    public func update(siteRating: SiteRating?, with config: PrivacyConfiguration?) {
         self.siteRating = siteRating
-        refresh()
+        refresh(with: config)
     }
     
-    public func refresh() {
-        
-        guard contentBlockerConfiguration.enabled, BlockerListsLoader().hasData else {
-            circleIndicator.tintColor = UIColor.monitoringNegativeTint
-            gradeLabel.text = "!"
+    private func resetSiteRatingImage() {
+        circleIndicator.image = PrivacyProtectionIconSource.iconImageTemplate(withString: " ",
+                                                                              iconSize: circleIndicator.bounds.size)
+    }
+
+    public func refresh(with config: PrivacyConfiguration?) {
+        guard let config = config,
+            let siteRating = siteRating else {
+            resetSiteRatingImage()
             return
         }
         
-        guard let siteRating = siteRating, siteRating.finishedLoading else {
-            circleIndicator.tintColor = UIColor.monitoringInactiveTint
-            gradeLabel.text = "-"
+        if AppUrls().isDuckDuckGoSearch(url: siteRating.url) {
+            circleIndicator.image = UIImage(named: "LogoIcon")
             return
         }
-        gradeLabel.text = UserText.forSiteGrade(siteRating.siteGrade)
-        circleIndicator.tintColor = colorForSiteRating(siteRating)
-    }
-    
-    private func colorForSiteRating(_ siteRating: SiteRating) -> UIColor {
-        switch siteRating.siteGrade {
-        case .a:
-            return UIColor.monitoringPositiveTint
-        case .b, .c:
-            return UIColor.monitoringNeutralTint
-        case .d:
-            return UIColor.monitoringNegativeTint
+        
+        switch mode {
+        case .loading:
+            circleIndicator.image = PrivacyProtectionIconSource.iconImageTemplate(withString: " ",
+                                                                                  iconSize: circleIndicator.bounds.size)
+        case .ready:
+            let grades = siteRating.scores
+            let grade = config.isProtected(domain: siteRating.domain) ? grades.enhanced : grades.site
+            
+            circleIndicator.image = SiteRatingView.gradeImages[grade.grade]
+            circleIndicator.accessibilityLabel = UserText.privacyGrade(grade.grade.rawValue.uppercased())
+            circleIndicator.accessibilityHint = UserText.privacyGradeHint
         }
     }
+}
+
+@available(iOS 13.4, *)
+extension SiteRatingView: UIPointerInteractionDelegate {
+    
+    public func pointerInteraction(_ interaction: UIPointerInteraction, styleFor region: UIPointerRegion) -> UIPointerStyle? {
+        return .init(effect: .lift(.init(view: self)))
+    }
+    
 }

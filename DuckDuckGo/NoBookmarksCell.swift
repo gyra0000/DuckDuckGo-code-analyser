@@ -17,9 +17,16 @@
 //  limitations under the License.
 //
 
-
 import UIKit
 
 class NoBookmarksCell: UITableViewCell {
+    
+    @IBOutlet var label: UILabel!
+    
     static let reuseIdentifier = "NoBookmarskCell"
+}
+
+class NoBookmarksInSubfolderCell: UITableViewCell {
+    
+    static let reuseIdentifier = "NoBookmarksInSubfolderCell"
 }

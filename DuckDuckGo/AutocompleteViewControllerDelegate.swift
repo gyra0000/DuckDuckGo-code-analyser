@@ -17,14 +17,21 @@
 //  limitations under the License.
 //
 
+import UIKit
 
-import Foundation
+protocol AutocompleteViewControllerDelegate: AnyObject {
 
-protocol AutocompleteViewControllerDelegate: class {
+    func autocomplete(selectedSuggestion suggestion: Suggestion)
+
+    func autocomplete(highlighted suggestion: Suggestion, for query: String)
     
-    func autocomplete(selectedSuggestion suggestion: String)
-    
-    func autocomplete(pressedPlusButtonForSuggestion suggestion: String)
-    
+    func autocomplete(pressedPlusButtonForSuggestion suggestion: Suggestion)
+
     func autocompleteWasDismissed()
+}
+
+protocol AutocompleteViewControllerPresentationDelegate: AnyObject {
+    
+    func autocompleteDidChangeContentHeight(height: CGFloat)
+
 }

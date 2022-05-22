@@ -17,31 +17,157 @@
 //  limitations under the License.
 //
 
-
 import UIKit
 import Core
-import Kingfisher
 
-class TabViewCell: UICollectionViewCell {
+protocol TabViewCellDelegate: AnyObject {
+
+    func deleteTab(tab: Tab)
+
+    func isCurrent(tab: Tab) -> Bool
     
-    static let reuseIdentifier = "TabCell"
+}
+
+class TabViewCell: UICollectionViewCell, Themable {
     
-    @IBOutlet weak var favicon: UIImageView!
-    @IBOutlet weak var title: UILabel!
-    @IBOutlet weak var link: UILabel!
-    @IBOutlet weak var removeButton: UIButton!
+    struct Constants {
+        static let swipeToDeleteAlpha: CGFloat = 0.5
+    }
+
+    var removeThreshold: CGFloat {
+        return frame.width / 3
+    }
+
+    weak var delegate: TabViewCellDelegate?
+    weak var tab: Tab?
+    var isCurrent = false
+    var isDeleting = false
+    var canDelete = false
     
-    func update(withTab tab: Tab) {
-        title.text = tab.link?.title ?? ""
-        link.text = tab.link?.url.absoluteString ?? ""
-        configureFavicon(tab.link?.favicon)
+    weak var collectionReorderRecognizer: UIGestureRecognizer?
+
+    override func awakeFromNib() {
+        super.awakeFromNib()
+        let recognizer = UIPanGestureRecognizer(target: self, action: #selector(handleSwipe(recognizer:)))
+        recognizer.delegate = self
+        addGestureRecognizer(recognizer)
+        
+        setupSubviews()
     }
     
-    private func configureFavicon(_ faviconUrl: URL?) {
-        let placeholder = #imageLiteral(resourceName: "GlobeSmall")
-        favicon.image = placeholder
-        if let favicon = favicon {
-            favicon.kf.setImage(with: faviconUrl, placeholder: placeholder)
+    func setupSubviews() {
+        backgroundColor = .clear
+        layer.cornerRadius = backgroundView?.layer.cornerRadius ?? 0.0
+        layer.shadowColor = UIColor.black.cgColor
+        layer.shadowOffset = CGSize(width: 0, height: 1)
+        layer.shadowRadius = 3.0
+        layer.shadowOpacity = 0.15
+        layer.masksToBounds = false
+        layer.shouldRasterize = true
+        layer.rasterizationScale = UIScreen.main.scale
+    }
+
+    var startX: CGFloat = 0
+    @objc func handleSwipe(recognizer: UIGestureRecognizer) {
+        let currentLocation = recognizer.location(in: nil)
+        let diff = startX - currentLocation.x
+
+        switch recognizer.state {
+
+        case .began:
+            startX = currentLocation.x
+
+        case .changed:
+            let offset = max(0, startX - currentLocation.x)
+            transform = CGAffineTransform.identity.translatedBy(x: -offset, y: 0)
+            if diff > removeThreshold {
+                if !canDelete {
+                    makeTranslucent()
+                    UIImpactFeedbackGenerator().impactOccurred()
+                }
+                canDelete = true
+            } else {
+                if canDelete {
+                   makeOpaque()
+                }
+                canDelete = false
+            }
+
+        case .ended:
+            if canDelete {
+                startRemoveAnimation()
+            } else {
+                startCancelAnimation()
+            }
+            canDelete = false
+
+        case .cancelled:
+            startCancelAnimation()
+            canDelete = false
+
+        default: break
+
         }
     }
+    
+    private func makeTranslucent() {
+        UIView.animate(withDuration: 0.2, animations: {
+            self.alpha = Constants.swipeToDeleteAlpha
+        })
+    }
+    
+    private func makeOpaque() {
+        UIView.animate(withDuration: 0.2, animations: {
+            self.alpha = 1.0
+        })
+    }
+
+    private func startRemoveAnimation() {
+        UIView.animate(withDuration: 0.2, animations: {
+            self.transform = CGAffineTransform.identity.translatedBy(x: -self.frame.width, y: 0)
+        }, completion: { _ in
+            self.isHidden = true
+            self.isDeleting = true
+            self.deleteTab()
+        })
+    }
+
+    private func startCancelAnimation() {
+        UIView.animate(withDuration: 0.2) {
+            self.transform = .identity
+        }
+    }
+
+    func update(withTab tab: Tab,
+                preview: UIImage?,
+                reorderRecognizer: UIGestureRecognizer?) {}
+    
+    @IBAction func deleteTab() {
+        guard let tab = tab else { return }
+        self.delegate?.deleteTab(tab: tab)
+    }
+    
+    func decorate(with theme: Theme) {}
+}
+
+extension TabViewCell: UIGestureRecognizerDelegate {
+    
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                           shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        return true
+    }
+ 
+    override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard let pan = gestureRecognizer as? UIPanGestureRecognizer else { return true }
+        let velocity = pan.velocity(in: self)
+        return abs(velocity.y) < abs(velocity.x)
+    }
+    
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRequireFailureOf otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard otherGestureRecognizer == collectionReorderRecognizer else {
+            return false
+        }
+        return true
+    }
+    
 }

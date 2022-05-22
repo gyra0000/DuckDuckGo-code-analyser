@@ -17,42 +17,48 @@
 //  limitations under the License.
 //
 
-
 import XCTest
 @testable import Core
+@testable import BrowserServicesKit
 
 class AtbParserTests: XCTestCase {
-    
+
     private var testee = AtbParser()
     private var data = JsonTestDataLoader()
-    
+
     func testWhenDataEmptyThenInvalidJsonErrorThrown() {
         XCTAssertThrowsError(try testee.convert(fromJsonData: data.empty()), "") { (error) in
             XCTAssertEqual(error.localizedDescription, JsonError.invalidJson.localizedDescription)
         }
     }
-    
+
     func testWhenJsonInvalidThenInvalidJsonErrorThrown() {
         XCTAssertThrowsError(try testee.convert(fromJsonData: data.invalid()), "") { (error) in
             XCTAssertEqual(error.localizedDescription, JsonError.invalidJson.localizedDescription)
         }
     }
-    
+
     func testWhenJsonIncorrectForTypeThenTypeMismatchErrorThrown() {
         XCTAssertThrowsError(try testee.convert(fromJsonData: data.unexpected()), "") { (error) in
             XCTAssertEqual(error.localizedDescription, JsonError.typeMismatch.localizedDescription)
         }
     }
-    
+
     func testWhenJsonValidThenNoErrorThrown() {
-        let validJson = data.fromJsonFile("MockJson/atb.json")
+        let validJson = data.fromJsonFile("MockFiles/atb.json")
         XCTAssertNoThrow(try testee.convert(fromJsonData: validJson))
     }
-    
+
     func testWhenJsonValidThenResultContainsAtb() {
-        let validJson = data.fromJsonFile("MockJson/atb.json")
-        let result = try! testee.convert(fromJsonData: validJson)
-        XCTAssertEqual(result.version, "v77-5")
+        let validJson = data.fromJsonFile("MockFiles/atb.json")
+        let result = try? testee.convert(fromJsonData: validJson)
+        XCTAssertEqual(result?.version, "v77-5")
     }
-    
+
+    func testWhenJsonContainsUpdateVersionThenResultContainsUpdateVersion() {
+        let validJson = data.fromJsonFile("MockFiles/atb-with-update.json")
+        let result = try? testee.convert(fromJsonData: validJson)
+        XCTAssertEqual(result?.updateVersion, "v20-1")
+    }
+
 }

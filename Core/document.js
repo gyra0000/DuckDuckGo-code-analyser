@@ -17,27 +17,34 @@
 //  limitations under the License.
 //
 
+(function () {
+    if (!window.__ddg__) {
+        Object.defineProperty(window, '__ddg__', {
+            enumerable: false,
+            configurable: false,
+            writable: false,
+            value: {
+            }
+        })
+    }
 
-var duckduckgoDocument = function () {
-    
-    getHrefFromPoint = function(x, y) {
-        var element = document.elementFromPoint(x, y);
+    const getHrefFromPoint = function (x, y) {
+        let element = document.elementFromPoint(x, y)
         while (element && !element.href) {
             element = element.parentNode
         }
-        return getHrefFromElement(element)
-    };
-    
-    getHrefFromElement = function(element) {
+
         if (element) {
             return element.href
         }
+
         return null
-    };
-    
-    return {
-        getHrefFromPoint: getHrefFromPoint,
-        getHrefFromElement: getHrefFromElement
-    };
-    
-}();
+    }
+
+    Object.defineProperty(window.__ddg__, 'getHrefFromPoint', {
+        enumerable: false,
+        configurable: false,
+        writable: false,
+        value: getHrefFromPoint
+    })
+})()

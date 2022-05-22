@@ -17,13 +17,27 @@
 //  limitations under the License.
 //
 
-
 import Foundation
 
 extension NSAttributedString {
     public func withText(_ text: String) -> NSAttributedString {
-        let mutableText = mutableCopy() as! NSMutableAttributedString
+        guard let mutableText = mutableCopy() as? NSMutableAttributedString else {
+            return NSAttributedString(string: text)
+        }
         mutableText.mutableString.setString(text)
         return mutableText
+    }
+    
+    public var font: UIFont? {
+        return attributes(at: 0, effectiveRange: nil)[.font] as? UIFont
+    }
+    
+    public func stringWithFontSize(_ size: CGFloat) -> NSAttributedString? {
+        guard let font = font else { return nil }
+        let newFont = font.withSize(size)
+        
+        let newString = NSMutableAttributedString(attributedString: self)
+        newString.setAttributes([.font: newFont], range: string.fullRange)
+        return newString
     }
 }

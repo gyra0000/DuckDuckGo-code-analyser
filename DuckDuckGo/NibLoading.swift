@@ -17,7 +17,6 @@
 //  limitations under the License.
 //
 
-
 import UIKit
 
 protocol NibLoading {
@@ -26,8 +25,10 @@ protocol NibLoading {
 extension NibLoading where Self: UIView {
     static func load(nibName: String) -> Self {
         let nib = UINib(nibName: nibName, bundle: nil)
-        let view = nib.instantiate(withOwner: self, options: nil).first as! Self
-        view.autoresizingMask = [UIViewAutoresizing.flexibleWidth, UIViewAutoresizing.flexibleHeight]
+        guard let view = nib.instantiate(withOwner: self, options: nil).first as? Self else {
+            fatalError("Error instantiating view")
+        }
+        view.autoresizingMask = [UIView.AutoresizingMask.flexibleWidth, UIView.AutoresizingMask.flexibleHeight]
         return view
     }
 }

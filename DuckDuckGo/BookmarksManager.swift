@@ -18,68 +18,202 @@
 //
 
 import Core
+import WidgetKit
+import CoreData
 
 class BookmarksManager {
     
-    private let dataStore: BookmarkUserDefaults
-
-    init(dataStore: BookmarkUserDefaults = BookmarkUserDefaults()) {
-        self.dataStore = dataStore
+    public struct Notifications {
+        public static let bookmarksDidChange = Notification.Name("com.duckduckgo.app.BookmarksDidChange")
     }
 
-    var isEmpty: Bool {
-        return dataStore.bookmarks?.isEmpty ?? true
+    private(set) var coreDataStorage: BookmarksCoreDataStorage
+
+    init(coreDataStore: BookmarksCoreDataStorage = BookmarksCoreDataStorage.shared) {
+        self.coreDataStorage = coreDataStore
+        NotificationCenter.default.addObserver(self,
+                                               selector: #selector(dataDidChange),
+                                               name: BookmarksCoreDataStorage.Notifications.dataDidChange,
+                                               object: nil)
     }
     
-    var count: Int {
-        return dataStore.bookmarks?.count ?? 0
+    @objc func dataDidChange(notification: Notification) {
+        NotificationCenter.default.post(name: BookmarksManager.Notifications.bookmarksDidChange, object: nil)
+    }
+
+    var topLevelBookmarkItemsCount: Int {
+        return coreDataStorage.topLevelBookmarksItems.count
     }
     
-    func bookmark(atIndex index: Int) -> Link {
-        return dataStore.bookmarks![index]
+    var topLevelBookmarkItems: [BookmarkItemManagedObject] {
+        return coreDataStorage.topLevelBookmarksItems
     }
     
-    func save(bookmark: Link) {
-        dataStore.addBookmark(bookmark)
+    var topLevelBookmarksFolder: BookmarkFolderManagedObject? {
+        return coreDataStorage.topLevelBookmarksFolder
     }
     
-    func delete(itemAtIndex index: Int) {
-        if var newBookmarks = dataStore.bookmarks {
-            newBookmarks.remove(at: index)
-            dataStore.bookmarks = newBookmarks
+    var favorites: [BookmarkManagedObject] {
+        return coreDataStorage.favorites
+    }
+        
+    var favoritesCount: Int {
+        return favorites.count
+    }
+    
+    func favorite(atIndex index: Int) -> BookmarkManagedObject? {
+        if favorites.count <= index {
+            return nil
+        }
+        return favorites[index]
+    }
+    
+    func contains(url: URL, completion: @escaping (Bool) -> Void) {
+        coreDataStorage.contains(url: url, completion: completion)
+    }
+    
+    func containsBookmark(url: URL, completion: @escaping (Bool) -> Void) {
+        coreDataStorage.containsBookmark(url: url, completion: completion)
+    }
+    
+    func containsFavorite(url: URL, completion: @escaping (Bool) -> Void) {
+        coreDataStorage.containsFavorite(url: url, completion: completion)
+    }
+    
+    func bookmark(forURL url: URL, completion: @escaping (BookmarkManagedObject?) -> Void) {
+        coreDataStorage.bookmark(forURL: url, completion: completion)
+    }
+    
+    func favorite(forURL url: URL, completion: @escaping (BookmarkManagedObject?) -> Void) {
+        coreDataStorage.favorite(forURL: url, completion: completion)
+    }
+    
+    func saveNewFolder(withTitle title: String, parentID: NSManagedObjectID, completion: BookmarkItemSavedMainThreadCompletion? = nil) {
+        coreDataStorage.saveNewFolder(withTitle: title, parentID: parentID, completion: completion)
+        Pixel.fire(pixel: .bookmarksFolderCreated)
+    }
+    
+    func saveNewFavorite(withTitle title: String, url: URL, completion: BookmarkItemSavedMainThreadCompletion? = nil) {
+        coreDataStorage.saveNewFavorite(withTitle: title, url: url) { objectID, error in
+            self.reloadWidgets()
+            completion?(objectID, error)
+        }
+        Favicons.shared.loadFavicon(forDomain: url.host, intoCache: .bookmarks, fromCache: .tabs)
+    }
+    
+    func saveNewBookmark(withTitle title: String, url: URL, parentID: NSManagedObjectID?, completion: BookmarkItemSavedMainThreadCompletion? = nil) {
+        coreDataStorage.saveNewBookmark(withTitle: title, url: url, parentID: parentID, completion: completion)
+        Favicons.shared.loadFavicon(forDomain: url.host, intoCache: .bookmarks, fromCache: .tabs)
+        if parentID != nil {
+            Pixel.fire(pixel: .bookmarkCreatedInSubfolder)
+        } else {
+            Pixel.fire(pixel: .bookmarkCreatedAtTopLevel)
         }
     }
     
-    func move(itemAtIndex oldIndex: Int, to newIndex: Int) {
-        if var newBookmarks = dataStore.bookmarks {
-            let link = newBookmarks.remove(at: oldIndex)
-            newBookmarks.insert(link, at: newIndex)
-            dataStore.bookmarks = newBookmarks
-        }
+    func update(folderID: NSManagedObjectID,
+                newTitle: String,
+                newParentID: NSManagedObjectID,
+                completion: BookmarkItemUpdatedBackgroundThreadCompletion? = nil) {
+        
+        coreDataStorage.update(folderID: folderID, newTitle: newTitle, newParentID: newParentID, completion: completion)
     }
     
-    func update(index: Int, withBookmark newBookmark: Link) {
-        if var newBookmarks = dataStore.bookmarks {
-            _ = newBookmarks.remove(at: index)
-            newBookmarks.insert(newBookmark, at: index)
-            dataStore.bookmarks = newBookmarks
+    func update(favorite: Bookmark, newTitle: String, newURL: URL, completion: BookmarkItemUpdatedBackgroundThreadCompletion? = nil) {
+        updateFaviconIfNeeded(favorite, newURL)
+        coreDataStorage.update(favoriteID: favorite.objectID, newTitle: newTitle, newURL: newURL) { success, error in
+            self.reloadWidgets()
+            completion?(success, error)
         }
-    }
-    
-    func clear() {
-        dataStore.bookmarks = [Link]()
     }
 
-    func indexOf(url: URL) -> Int? {
-        guard let bookmarks = dataStore.bookmarks else { return nil }
-        var index = 0
-        for link in bookmarks {
-            if link.url == url {
-                return index
+    func update(bookmark: Bookmark,
+                newTitle: String,
+                newURL: URL,
+                newParentID: NSManagedObjectID,
+                completion: BookmarkItemUpdatedBackgroundThreadCompletion? = nil) {
+        
+        coreDataStorage.update(bookmarkID: bookmark.objectID, newTitle: newTitle, newURL: newURL, newParentID: newParentID, completion: completion)
+        updateFaviconIfNeeded(bookmark, newURL)
+        if newParentID == topLevelBookmarksFolder?.objectID {
+            Pixel.fire(pixel: .bookmarkEditedAtTopLevel)
+        } else {
+            Pixel.fire(pixel: .bookmarkEditedInSubfolder)
+        }
+    }
+    
+    func updateIndex(of bookmarkItemID: NSManagedObjectID, newIndex: Int, completion: BookmarkItemIndexUpdatedBackgroundThreadCompletion? = nil) {
+        coreDataStorage.updateIndex(of: bookmarkItemID, newIndex: newIndex) { success, error in
+            self.reloadWidgets()
+            completion?(success, error)
+        }
+    }
+    
+    func convertFavoriteToBookmark(_ favoriteID: NSManagedObjectID, newIndex: Int, completion: BookmarkConvertedBackgroundThreadCompletion? = nil) {
+        coreDataStorage.convertFavoriteToBookmark(favoriteID, newIndex: newIndex) { success, error in
+            self.reloadWidgets()
+            completion?(success, error)
+        }
+    }
+    
+    func convertBookmarkToFavorite(_ bookmarkID: NSManagedObjectID, newIndex: Int, completion: BookmarkConvertedBackgroundThreadCompletion? = nil) {
+        coreDataStorage.convertBookmarkToFavorite(bookmarkID, newIndex: newIndex) { success, error in
+            self.reloadWidgets()
+            completion?(success, error)
+        }
+    }
+    
+    func delete(_ bookmarkItem: BookmarkItem, completion: BookmarkItemDeletedBackgroundThreadCompletion? = nil) {
+        var reloadWidget = false
+        if let bookmark = bookmarkItem as? Bookmark {
+            removeFavicon(forBookmark: bookmark)
+            if bookmark.isFavorite {
+                reloadWidget = true
             }
-            index += 1
         }
-        return nil
+        coreDataStorage.delete(bookmarkItem.objectID) { success, error in
+            if reloadWidget {
+                self.reloadWidgets()
+            }
+            completion?(success, error)
+        }
+    }
+    
+    private func removeFavicon(forBookmark bookmark: Bookmark?) {
+        guard let domain = bookmark?.url?.host else { return }
+        
+        coreDataStorage.allBookmarksAndFavoritesFlat { bookmarks in
+            let matchesDomain: ((Bookmark) -> Bool) = { $0.url?.host == domain }
+            if !bookmarks.contains(where: matchesDomain) {
+                print("culprit?")
+                Favicons.shared.removeBookmarkFavicon(forDomain: domain)
+            }
+        }
+    }
+    
+    private func updateFaviconIfNeeded(_ old: Bookmark, _ newURL: URL) {
+        guard old.url?.host != newURL.host else { return }
+        removeFavicon(forBookmark: old)
+        Favicons.shared.loadFavicon(forDomain: newURL.host, intoCache: .bookmarks)
     }
 
+    func reloadWidgets() {
+        if #available(iOS 14, *) {
+            WidgetCenter.shared.reloadAllTimelines()
+        }
+    }
+
+}
+
+// MARK: Debug menu methods (used in ImageCacheDebugViewController)
+
+extension BookmarksManager {
+
+    func allBookmarksAndFavoritesFlat(completion: @escaping ([BookmarkManagedObject]) -> Void) {
+        coreDataStorage.allBookmarksAndFavoritesFlat(completion: completion)
+    }
+
+    func allBookmarksAndFavoritesFlat() async -> [BookmarkManagedObject] {
+        return await coreDataStorage.allBookmarksAndFavoritesFlat()
+    }
 }

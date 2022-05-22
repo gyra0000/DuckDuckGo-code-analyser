@@ -18,36 +18,19 @@
 //
 
 import Foundation
-import SwiftyJSON
+import BrowserServicesKit
 
+public typealias TermsOfServiceList = [String: TermsOfService]
 
 public class TermsOfServiceListParser {
-    
-    public init() {}
-    
-    func convert(fromJsonData data: Data) throws -> [String: TermsOfService] {
-        guard let json = try? JSON(data: data) else {
+    func convert(fromJsonData data: Data) throws -> TermsOfServiceList {
+        do {
+            let decoder = JSONDecoder()
+            return try decoder.decode(TermsOfServiceList.self, from: data)
+        } catch DecodingError.dataCorrupted {
             throw JsonError.invalidJson
+        } catch {
+            throw JsonError.typeMismatch
         }
-        return try convertList(fromJson: json)
     }
-
-    private func convertList(fromJson json: JSON) throws -> [String: TermsOfService] {
-        var dict = [String: TermsOfService]()
-        for (key, termsJson) in json {
-            let terms = try convertTerms(fromJson: termsJson)
-            dict[key] = terms
-        }
-        return dict
-    }
-    
-    private func convertTerms(fromJson json: JSON) throws -> TermsOfService {
-        var classification: TermsOfService.Classification? = nil
-        if let classificationString = json["class"].string?.lowercased() {
-            classification = TermsOfService.Classification(rawValue: classificationString)
-        }
-        guard let score = json["score"].int else { throw JsonError.typeMismatch }
-        return TermsOfService(classification: classification, score: score)
-    }
-
 }

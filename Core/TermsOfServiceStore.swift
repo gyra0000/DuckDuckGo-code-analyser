@@ -18,21 +18,36 @@
 //
 
 import Foundation
+import os.log
 
-class TermsOfServiceStore {
-    
-    struct Constansts {
+public protocol TermsOfServiceStore {
+
+    var terms: [String: TermsOfService] { get }
+
+}
+
+public class EmbeddedTermsOfServiceStore: TermsOfServiceStore {
+
+    struct Constants {
         static let fileName = "tosdr.json"
     }
-    
-    private(set) lazy var terms = TermsOfServiceStore.load()
-    
-    private static func load() -> [String: TermsOfService] {
+
+    public private(set) var terms: [String: TermsOfService]
+
+    public init() {
         let parser = TermsOfServiceListParser()
-        let bundle = Bundle(for: TermsOfServiceStore.self)
+        let bundle = Bundle.core
         let fileLoader = FileLoader()
-        let data = try! fileLoader.load(fileName: Constansts.fileName, fromBundle: bundle)
-        let terms = try! parser.convert(fromJsonData: data)
-        return terms
+        guard let data = try? fileLoader.load(fileName: Constants.fileName, fromBundle: bundle) else {
+            fatalError("Unable to load \(Constants.fileName) from bundle \(bundle)")
+        }
+        do {
+            let terms = try parser.convert(fromJsonData: data)
+            self.terms = terms
+        } catch {
+            os_log("%s", log: lifecycleLog, type: .debug, error.localizedDescription)
+            fatalError("Unable to decode tosdr json")
+        }
     }
+
 }

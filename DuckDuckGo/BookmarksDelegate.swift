@@ -17,11 +17,13 @@
 //  limitations under the License.
 //
 
-
 import Foundation
 import Core
 
-protocol BookmarksDelegate: class {
+protocol BookmarksDelegate: AnyObject {
+
+    func bookmarksDidSelect(bookmark: Bookmark)
     
-    func bookmarksDidSelect(link: Link)
+    func bookmarksUpdated()
+    
 }

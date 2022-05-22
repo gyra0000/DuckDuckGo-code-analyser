@@ -17,21 +17,60 @@
 //  limitations under the License.
 //
 
-
 import WebKit
 import Core
 
-protocol TabDelegate: class {
+protocol TabDelegate: AnyObject {
+
+    func tabWillRequestNewTab(_ tab: TabViewController) -> UIKeyModifierFlags?
 
     func tabDidRequestNewTab(_ tab: TabViewController)
-    
-    func tab(_ tab: TabViewController, didRequestNewTabForUrl url: URL)
 
-    func tabLoadingStateDidChange(tab: TabViewController)
+    func tab(_ tab: TabViewController,
+             didRequestNewWebViewWithConfiguration configuration: WKWebViewConfiguration,
+             for navigationAction: WKNavigationAction) -> WKWebView?
+
+    func tabDidRequestClose(_ tab: TabViewController)
+
+    func tab(_ tab: TabViewController, didRequestNewTabForUrl url: URL, openedByPage: Bool)
+
+    func tab(_ tab: TabViewController, didRequestNewBackgroundTabForUrl url: URL)
     
+    func tabLoadingStateDidChange(tab: TabViewController)
+    func tab(_ tab: TabViewController, didUpdatePreview preview: UIImage)
+
     func tab(_ tab: TabViewController, didChangeSiteRating siteRating: SiteRating?)
+
+    func tabDidRequestReportBrokenSite(tab: TabViewController)
+    
+    func tabDidRequestBookmarks(tab: TabViewController)
+    
+    func tabDidRequestEditBookmark(tab: TabViewController)
+    
+    func tabDidRequestDownloads(tab: TabViewController)
 
     func tabDidRequestSettings(tab: TabViewController)
     
-    func tabDidRequestMemoryReduction(tab: TabViewController)
+    func tabDidRequestFindInPage(tab: TabViewController)
+
+    func tabContentProcessDidTerminate(tab: TabViewController)
+    
+    func tabDidRequestForgetAll(tab: TabViewController)
+    
+    func tabDidRequestFireButtonPulse(tab: TabViewController)
+        
+    func tabDidRequestSearchBarRect(tab: TabViewController) -> CGRect
+
+    func tab(_ tab: TabViewController,
+             didRequestPresentingTrackerAnimation siteRating: SiteRating,
+             isCollapsing: Bool)
+    
+    func tabDidRequestShowingMenuHighlighter(tab: TabViewController)
+    
+    func tab(_ tab: TabViewController, didRequestPresentingAlert alert: UIAlertController)
+
+    func tabCheckIfItsBeingCurrentlyPresented(_ tab: TabViewController) -> Bool
+    
+    func showBars()
+
 }

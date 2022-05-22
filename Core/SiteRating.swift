@@ -17,80 +17,137 @@
 //  limitations under the License.
 //
 
-
 import Foundation
+import os.log
+import TrackerRadarKit
+import BrowserServicesKit
 
 public class SiteRating {
+
+    public struct Constants {
+        public static let majorNetworkPrevalence = 7.0
+    }
     
-    public var url: URL
-    public let domain: String
-    public var finishedLoading = false
-    private var trackersDetected = [Tracker: Int]()
-    private var trackersBlocked = [Tracker: Int]()
-    private var termsOfServiceStore = TermsOfServiceStore()
-    private var disconnectMeTrackers: [String: Tracker]
+    public enum EncryptionType {
+        case unencrypted, mixed, encrypted, forced
+    }
+
+    public var domain: String? {
+        return url.host
+    }
     
-    public init?(url: URL, disconnectMeTrackers: [String: Tracker] = DisconnectMeStore().trackers) {
-        guard let domain = url.host else {
-            return nil
+    public var scores: Grade.Scores {
+        if let scores = cache.get(url: url), scores.site.score > grade.scores.site.score {
+            return scores
         }
+        return grade.scores
+    }
+
+    public let url: URL
+    public let httpsForced: Bool
+    public let privacyPractice: PrivacyPractices.Practice
+    
+    public var hasOnlySecureContent: Bool
+    public var finishedLoading = false
+    public private (set) var trackersDetected = Set<DetectedTracker>()
+    public private (set) var trackersBlocked = Set<DetectedTracker>()
+    public private (set) var installedSurrogates = Set<String>()
+    
+    private let grade = Grade()
+    private let cache = GradeCache.shared
+    private let entity: Entity?
+    
+    public init(url: URL,
+                httpsForced: Bool = false,
+                entityMapping: EntityMapping,
+                privacyPractices: PrivacyPractices) {
+
+        os_log("new SiteRating(url: %s, httpsForced: %s)", log: lifecycleLog, type: .debug, url.absoluteString, String(describing: httpsForced))
+
+        if let host = url.host, let entity = entityMapping.findEntity(forHost: host) {
+            self.grade.setParentEntity(named: entity.displayName ?? "", withPrevalence: entity.prevalence ?? 0)
+            self.entity = entity
+        } else {
+            entity = nil
+        }
+
         self.url = url
-        self.domain = domain
-        self.disconnectMeTrackers = disconnectMeTrackers
+        self.httpsForced = httpsForced
+        self.hasOnlySecureContent = url.isHttps
+        self.privacyPractice = privacyPractices.findPractice(forHost: url.host ?? "")
+        
+        // This will change when there is auto upgrade data.  The default is false, but we don't penalise sites at this time so if the url is https
+        //  then we assume auto upgrade is available for the purpose of grade scoring.
+        self.grade.httpsAutoUpgrade = url.isHttps
+        self.grade.https = url.isHttps
+        self.grade.privacyScore = privacyPractice.score
+        
     }
     
     public var https: Bool {
-        return url.isHttps()
+        return url.isHttps
     }
-    
-    var majorTrackingNetwork: MajorTrackerNetwork? {
-       
-        if let network = MajorTrackerNetwork.network(forDomain: domain) {
-            return network
+
+    public var encryptionType: EncryptionType {
+        if hasOnlySecureContent {
+            return httpsForced ? .forced : .encrypted
+        } else if https {
+            return .mixed
         }
-        
-        if let associatedDomain = disconnectMeTrackers.filter( { domain.hasSuffix($0.key) } ).first?.value.parentDomain {
-            return MajorTrackerNetwork.network(forDomain: associatedDomain)
-        }
-            
-        return nil
+
+        return .unencrypted
     }
-    
+
+    public var majorTrackerNetworksDetected: Int {
+        return trackersDetected.filter({ $0.entity?.prevalence ?? 0 >= Constants.majorNetworkPrevalence }).count
+    }
+
+    public var majorTrackerNetworksBlocked: Int {
+        return trackersBlocked.filter({ $0.entity?.prevalence ?? 0 >= Constants.majorNetworkPrevalence }).count
+    }
+
+    public var trackerNetworksDetected: Int {
+        return trackersDetected.filter({ $0.entity?.prevalence ?? 0 < Constants.majorNetworkPrevalence }).count
+    }
+
+    public var uniqueTrackerNetworksBlocked: Int {
+        return trackersBlocked.filter({ $0.entity?.prevalence ?? 0 < Constants.majorNetworkPrevalence }).count
+    }
+
     public var containsMajorTracker: Bool {
-        return trackersDetected.contains(where: { $0.key.fromMajorNetwork } )
-    }
-
-    public var contrainsIpTracker: Bool {
-        return trackersDetected.contains(where: { $0.key.isIpTracker } )
+        return majorTrackerNetworksBlocked > 0 || majorTrackerNetworksDetected > 0
     }
     
-    public var termsOfService: TermsOfService? {
-        return termsOfServiceStore.terms.filter( { domain.hasSuffix($0.0) } ).first?.value
+    public var isMajorTrackerNetwork: Bool {
+        return entity?.prevalence ?? 0 >= Constants.majorNetworkPrevalence
     }
 
-    public func trackerDetected(_ tracker: Tracker, blocked: Bool) {
-        let detectedCount = trackersDetected[tracker] ?? 0
-        trackersDetected[tracker] = detectedCount + 1
-        
-        if blocked{
-            let blockCount = trackersBlocked[tracker] ?? 0  
-            trackersBlocked[tracker] = blockCount + 1
+    public func trackerDetected(_ tracker: DetectedTracker) {
+        guard tracker.pageUrl == url.absoluteString else { return }
+        let entity = tracker.entity
+        if tracker.blocked {
+            trackersBlocked.insert(tracker)
+            grade.addEntityBlocked(named: entity?.displayName ?? "", withPrevalence: entity?.prevalence ?? 0)
+        } else {
+            trackersDetected.insert(tracker)
+            grade.addEntityNotBlocked(named: entity?.displayName ?? "", withPrevalence: entity?.prevalence ?? 0)
         }
     }
     
-    public var uniqueTrackersDetected: Int {
+    public func surrogateInstalled(_ surrogateHost: String) {
+        installedSurrogates.insert(surrogateHost)
+    }
+
+    public var totalTrackersDetected: Int {
         return trackersDetected.count
     }
-    
-    public var uniqueTrackersBlocked: Int {
+
+    public var totalTrackersBlocked: Int {
         return trackersBlocked.count
     }
     
-    public var totalTrackersDetected: Int {
-        return trackersDetected.reduce(0) { $0 + $1.value }
+    public func isFor(_ url: URL?) -> Bool {
+        return self.url.host == url?.host
     }
-    
-    public var totalTrackersBlocked: Int {
-        return trackersBlocked.reduce(0) { $0 + $1.value }
-    }
+
 }

@@ -17,169 +17,260 @@
 //  limitations under the License.
 //
 
-
 import Core
 import WebKit
+import os.log
 
 class TabManager {
-    
+
     private(set) var model: TabsModel
-    private var disconnectMeStore = DisconnectMeStore()
+    
     private var tabControllerCache = [TabViewController]()
-    
-    private weak var delegate: TabDelegate?
-    
-    init(model: TabsModel, delegate: TabDelegate) {
+
+    private var previewsSource: TabPreviewsSource
+    weak var delegate: TabDelegate?
+
+    init(model: TabsModel, previewsSource: TabPreviewsSource, delegate: TabDelegate) {
         self.model = model
+        self.previewsSource = previewsSource
         self.delegate = delegate
-        if let index = model.currentIndex {
-            let tab = model.tabs[index]
+        let index = model.currentIndex
+        let tab = model.tabs[index]
+        if tab.link != nil {
             let controller = buildController(forTab: tab)
             tabControllerCache.append(controller)
         }
+
+        registerForNotifications()
     }
-    
-    private var trackerDetector: TrackerDetector? {
-        guard #available(iOSApplicationExtension 11.0, *) else { return nil }
-        let trackers = Array(disconnectMeStore.trackers.values)
-        return TrackerDetector(disconnectTrackers: trackers)
-    }
-    
+
     private func buildController(forTab tab: Tab) -> TabViewController {
         let url = tab.link?.url
-        let request = url == nil ? nil : URLRequest(url: url!)
-        return buildController(forTab: tab, request: request)
+        return buildController(forTab: tab, url: url)
     }
-    
-    private func buildController(forTab tab: Tab, request: URLRequest?) -> TabViewController {
-        let contentBlocker = ContentBlockerConfigurationUserDefaults()
+
+    private func buildController(forTab tab: Tab, url: URL?) -> TabViewController {
         let configuration =  WKWebViewConfiguration.persistent()
-        let controller = TabViewController.loadFromStoryboard(model: tab, contentBlocker: contentBlocker, trackerDetector: trackerDetector)
-        controller.attachWebView(configuration: configuration)
+        let controller = TabViewController.loadFromStoryboard(model: tab)
+        controller.attachWebView(configuration: configuration,
+                                 andLoadRequest: url == nil ? nil : URLRequest.userInitiated(url!),
+                                 consumeCookies: !model.hasActiveTabs)
         controller.delegate = delegate
-        
-        if let request = request {
-            controller.load(urlRequest: request)
-        }
-        
+        controller.loadViewIfNeeded()
         return controller
     }
-    
+
     var current: TabViewController? {
-        
-        guard let index = model.currentIndex else { return nil }
+
+        let index = model.currentIndex
         let tab = model.tabs[index]
-        
-        if let controller = cachedController(forTab: tab) {
-            tabControllerCache.remove(at: tabControllerCache.index(of: controller)!)
-            tabControllerCache.append(controller)
+
+        if let controller = controller(for: tab) {
             return controller
         } else {
-            Logger.log(text: "Tab not in cache, creating")
+            os_log("Tab not in cache, creating", log: generalLog, type: .debug)
             let controller = buildController(forTab: tab)
             tabControllerCache.append(controller)
             return controller
         }
     }
     
+    private func controller(for tab: Tab) -> TabViewController? {
+        return tabControllerCache.first { $0.tabModel === tab }
+    }
+
     var isEmpty: Bool {
         return tabControllerCache.isEmpty
     }
     
+    var hasUnread: Bool {
+        return model.hasUnread
+    }
+
     var count: Int {
-        return tabControllerCache.count
+        return model.count
     }
-    
-    func clearSelection() {
-        current?.dismiss()
-        model.clearSelection()
-        save()
-    }
-    
+
     func select(tabAt index: Int) -> TabViewController {
         current?.dismiss()
         model.select(tabAt: index)
-        
+
         save()
         return current!
     }
-    
-    func add(url: URL?) -> TabViewController {
-        let request = url == nil ? nil : URLRequest(url: url!)
-        return add(request: request)
+
+    func addURLRequest(_ request: URLRequest,
+                       withConfiguration configuration: WKWebViewConfiguration) -> TabViewController {
+
+        guard let configCopy = configuration.copy() as? WKWebViewConfiguration else {
+            fatalError("Failed to copy configuration")
+        }
+
+        let tab = Tab(link: request.url == nil ? nil : Link(title: nil, url: request.url!))
+        model.insert(tab: tab, at: model.currentIndex + 1)
+        model.select(tabAt: model.currentIndex + 1)
+
+        let controller = TabViewController.loadFromStoryboard(model: tab)
+        controller.attachWebView(configuration: configCopy, andLoadRequest: request, consumeCookies: !model.hasActiveTabs)
+        controller.delegate = delegate
+        controller.loadViewIfNeeded()
+        tabControllerCache.append(controller)
+
+        save()
+        return controller
     }
-    
-    func add(request: URLRequest?) -> TabViewController {
-        current?.dismiss()
-        let url = request?.url
+
+    func addHomeTab() {
+        model.add(tab: Tab())
+        model.select(tabAt: model.count - 1)
+        save()
+    }
+
+    func firstHomeTab() -> Tab? {
+        return model.tabs.first(where: { $0.link == nil })
+    }
+
+    func first(withUrl url: URL) -> Tab? {
+        return model.tabs.first(where: {
+            guard let linkUrl = $0.link?.url else { return false }
+
+            if linkUrl == url {
+                return true
+            }
+
+            if linkUrl.scheme == "https" && url.scheme == "http" {
+                var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+                components?.scheme = "https"
+                return components?.url == linkUrl
+            }
+
+            return false
+        })
+    }
+
+    func selectTab(_ tab: Tab) {
+        guard let index = model.indexOf(tab: tab) else { return }
+        model.select(tabAt: index)
+        save()
+    }
+
+    func loadUrlInCurrentTab(_ url: URL) -> TabViewController {
+        guard let tab = model.currentTab else {
+            fatalError("No current tab")
+
+        }
+        let controller = buildController(forTab: tab, url: url)
+        tabControllerCache.append(controller)
+        
+        save()
+        return controller
+    }
+
+    func add(url: URL?, inBackground: Bool = false) -> TabViewController {
+
+        if !inBackground {
+            current?.dismiss()
+        }
+
         let link = url == nil ? nil : Link(title: nil, url: url!)
         let tab = Tab(link: link)
-        let controller = buildController(forTab: tab, request: request)
+        let controller = buildController(forTab: tab, url: url)
         tabControllerCache.append(controller)
-        model.add(tab: tab)
+
+        let index = model.currentIndex
+        model.insert(tab: tab, at: index + 1)
+
+        if !inBackground {
+            model.select(tabAt: index + 1)
+        }
+
         save()
         return controller
     }
-    
+
     func remove(at index: Int) {
         let tab = model.get(tabAt: index)
+        previewsSource.removePreview(forTab: tab)
         model.remove(tab: tab)
-        if let controller = cachedController(forTab: tab){
+        if let controller = controller(for: tab) {
             removeFromCache(controller)
         }
         save()
     }
-    
-    func remove(tabController: TabViewController) {
-        model.remove(tab: tabController.tabModel)
-        removeFromCache(tabController)
-        save()
-    }
-    
+
     private func removeFromCache(_ controller: TabViewController) {
-        if let index = tabControllerCache.index(of: controller) {
+        if let index = tabControllerCache.firstIndex(of: controller) {
             tabControllerCache.remove(at: index)
         }
-        controller.destroy()
+        controller.dismiss()
     }
-    
-    private func cachedController(forTab tab: Tab) -> TabViewController? {
-        let controller = tabControllerCache.filter( { $0.tabModel === tab } ).first
-        tab.link = controller?.link
-        save()
-        return controller
-    }
-    
+
     func removeAll() {
-        for controller in tabControllerCache {
-            remove(tabController: controller)
-        }
+        previewsSource.removeAllPreviews()
         model.clearAll()
+        for controller in tabControllerCache {
+            removeFromCache(controller)
+        }
         save()
     }
-    
-    func reduceMemory() {
-        
-        if tabControllerCache.count < 3 {
-            return
-        }
-        
-        let itemsToClear = tabControllerCache.count / 2
-        var itemsCleared = 0
-        
-        for controller in tabControllerCache {
-            if itemsCleared == itemsToClear {
-                break
-            }
-            if controller === current {
-                continue
-            }
+
+    func invalidateCache(forController controller: TabViewController) {
+        if current === controller {
+            Pixel.fire(pixel: .webKitTerminationDidReloadCurrentTab)
+            current?.reload(scripts: false)
+        } else {
             removeFromCache(controller)
-            itemsCleared += 1
         }
     }
-    
+
     func save() {
         model.save()
+    }
+    
+    func prepareAllTabsExceptCurrentForDataClearing() {
+        tabControllerCache.filter { $0 != current }.forEach { $0.prepareForDataClearing() }
+    }
+    
+    func prepareCurrentTabForDataClearing() {
+        current?.prepareForDataClearing()
+    }
+}
+
+extension TabManager: Themable {
+    
+    func decorate(with theme: Theme) {
+        for tabController in tabControllerCache {
+            tabController.decorate(with: theme)
+        }
+    }
+    
+}
+
+// MARK: - Debugging Pixels
+
+extension TabManager {
+
+    fileprivate func registerForNotifications() {
+        NotificationCenter.default.addObserver(self,
+                                               selector: #selector(onApplicationBecameActive),
+                                               name: UIApplication.didBecomeActiveNotification,
+                                               object: nil)
+    }
+
+    @objc
+    private func onApplicationBecameActive(_ notification: NSNotification) {
+        assertTabPreviewCount()
+    }
+
+    private func assertTabPreviewCount() {
+        let totalStoredPreviews = previewsSource.totalStoredPreviews()
+        let totalTabs = model.tabs.count
+
+        if let storedPreviews = totalStoredPreviews, storedPreviews > totalTabs {
+            Pixel.fire(pixel: .cachedTabPreviewsExceedsTabCount, withAdditionalParameters: [
+                PixelParameters.tabPreviewCountDelta: "\(storedPreviews - totalTabs)"
+            ])
+            TabPreviewsCleanup.shared.startCleanup(with: model, source: previewsSource)
+        }
     }
 }

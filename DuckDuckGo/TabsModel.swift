@@ -17,100 +17,139 @@
 //  limitations under the License.
 //
 
-
 import Foundation
 import Core
 
 public class TabsModel: NSObject, NSCoding {
 
     private struct NSCodingKeys {
-        static let currentIndex = "currentIndex"
-        static let tabs = "tabs"
+        static let legacyIndex = "currentIndex"
+        static let currentIndex = "currentIndex2"
+        static let legacyTabs = "tabs"
+        static let tabs = "tabs2"
     }
-    
-    private(set) var currentIndex: Int?
+
+    private(set) var currentIndex: Int
     private(set) var tabs: [Tab]
-    
-    public init(tabs: [Tab] = [Tab](), currentIndex: Int? = nil) {
-        self.tabs = tabs
+
+    var hasUnread: Bool {
+        return tabs.contains(where: { !$0.viewed })
+    }
+        
+    public init(tabs: [Tab] = [], currentIndex: Int = 0, desktop: Bool) {
+        self.tabs = tabs.isEmpty ? [Tab(desktop: desktop)] : tabs
         self.currentIndex = currentIndex
     }
-    
+
     public convenience required init?(coder decoder: NSCoder) {
-        guard let tabs = decoder.decodeObject(forKey: NSCodingKeys.tabs) as? [Tab] else { return nil }
-        var currentIndex = decoder.decodeObject(forKey: NSCodingKeys.currentIndex) as? Int
-        if let index = currentIndex, index < 0 || index >= tabs.count {
-            currentIndex = nil
+        // we migrated tabs to support uid
+        let storedTabs: [Tab]?
+        if let legacyTabs = decoder.decodeObject(forKey: NSCodingKeys.legacyTabs) as? [Tab], !legacyTabs.isEmpty {
+            storedTabs = legacyTabs
+        } else {
+            storedTabs = decoder.decodeObject(forKey: NSCodingKeys.tabs) as? [Tab]
         }
-        self.init(tabs: tabs, currentIndex: currentIndex)
+        
+        guard let tabs = storedTabs else {
+            return nil
+        }
+
+        // we migrated from an optional int to an actual int
+        var currentIndex = 0
+        if let storedIndex = decoder.decodeObject(forKey: NSCodingKeys.legacyIndex) as? Int {
+            currentIndex = storedIndex
+        } else {
+            currentIndex = decoder.decodeInteger(forKey: NSCodingKeys.currentIndex)
+        }
+        
+        if currentIndex < 0 || currentIndex >= tabs.count {
+            currentIndex = 0
+        }
+        self.init(tabs: tabs, currentIndex: currentIndex, desktop: UIDevice.current.userInterfaceIdiom == .pad)
     }
-    
+
     public func encode(with coder: NSCoder) {
         coder.encode(tabs, forKey: NSCodingKeys.tabs)
         coder.encode(currentIndex, forKey: NSCodingKeys.currentIndex)
     }
-    
-    var isEmpty: Bool {
-        return tabs.isEmpty
+
+    var currentTab: Tab? {
+        let index = currentIndex
+        return tabs[index]
     }
-    
+
     var count: Int {
         return tabs.count
     }
-    
+
+    var hasActiveTabs: Bool {
+        return tabs.count > 1 || tabs.last?.link != nil
+    }
+
     func select(tabAt index: Int) {
         currentIndex = index
-    }
-    
-    func clearSelection() {
-        currentIndex = nil
     }
 
     func get(tabAt index: Int) -> Tab {
         return tabs[index]
     }
-    
+
     func add(tab: Tab) {
         tabs.append(tab)
-        currentIndex = indexOf(tab: tab)
+        currentIndex = tabs.count - 1
+    }
+
+    func insert(tab: Tab, at index: Int) {
+        tabs.insert(tab, at: max(0, index))
     }
     
-    func remove(at index: Int) {
-        
-        tabs.remove(at: index)
-
-        guard let current = currentIndex else { return }
-        
-        if tabs.isEmpty {
-            currentIndex = nil
-            return
+    func moveTab(from sourceIndex: Int, to destIndex: Int) {
+        guard sourceIndex >= 0, sourceIndex < tabs.count,
+            destIndex >= 0, destIndex < tabs.count else {
+                return
         }
         
+        let previouslyCurrentTab = currentTab
+        let tab = tabs.remove(at: sourceIndex)
+        tabs.insert(tab, at: destIndex)
+        
+        if let reselectTab = previouslyCurrentTab {
+            currentIndex = indexOf(tab: reselectTab) ?? 0
+        }
+    }
+
+    func remove(at index: Int) {
+
+        tabs.remove(at: index)
+
+        let current = currentIndex
+
+        if tabs.isEmpty {
+            tabs.append(Tab())
+            currentIndex = 0
+            return
+        }
+
         if current == 0 || current < index {
             return
         }
-        
+
         currentIndex = current - 1
     }
-    
+
     func remove(tab: Tab) {
         if let index = indexOf(tab: tab) {
             remove(at: index)
         }
     }
-    
+
     func indexOf(tab: Tab) -> Int? {
-        for (index, current) in tabs.enumerated() {
-            if current === tab {
-                return index
-            }
-        }
-        return nil
+        return tabs.firstIndex { $0 === tab }
     }
-    
+
     func clearAll() {
-        for tab in tabs {
-            remove(tab: tab)
-        }
+        tabs.removeAll()
+        tabs.append(Tab())
+        currentIndex = 0
     }
 }

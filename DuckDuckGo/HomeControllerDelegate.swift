@@ -17,16 +17,27 @@
 //  limitations under the License.
 //
 
+import UIKit
+import Core
 
-import Foundation
-
-protocol HomeControllerDelegate: class {
-    
-    func homeDidActivateOmniBar(home: HomeViewController)
-    
-    func homeDidDeactivateOmniBar(home: HomeViewController)
+protocol HomeControllerDelegate: AnyObject {
 
     func home(_ home: HomeViewController, didRequestUrl url: URL)
+    
+    func home(_ home: HomeViewController, didRequestEdit favorite: Bookmark)
 
     func home(_ home: HomeViewController, didRequestQuery query: String)
+    
+    func home(_ home: HomeViewController, didRequestContentOverflow shouldOverflow: Bool) -> CGFloat
+
+    func homeDidDeactivateOmniBar(home: HomeViewController)
+
+    func showSettings(_ home: HomeViewController)
+    
+    func home(_ home: HomeViewController, didRequestHideLogo hidden: Bool)
+        
+    func homeDidRequestLogoContainer(_ home: HomeViewController) -> UIView
+    
+    func home(_ home: HomeViewController, searchTransitionUpdated percent: CGFloat)
+    
 }

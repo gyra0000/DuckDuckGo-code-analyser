@@ -17,20 +17,102 @@
 //  limitations under the License.
 //
 
-
 import Foundation
 
-protocol OmniBarDelegate: class {
-    
-    func onOmniQueryUpdated(_ query: String)
+protocol OmniBarDelegate: AnyObject {
 
+    func onOmniQueryUpdated(_ query: String)
+    
     func onOmniQuerySubmitted(_ query: String)
-            
+
+    func onOmniSuggestionSelected(_ suggestion: Suggestion)
+    
     func onDismissed()
     
     func onSiteRatingPressed()
-
+    
     func onMenuPressed()
     
     func onBookmarksPressed()
+    
+    func onSettingsPressed()
+    
+    func onCancelPressed()
+    
+    func onEnterPressed()
+
+    func onRefreshPressed()
+    
+    func onBackPressed()
+    
+    func onForwardPressed()
+    
+    func onSharePressed()
+    
+    func onTextFieldWillBeginEditing(_ omniBar: OmniBar)
+    
+    // Returns whether field should select the text or not
+    func onTextFieldDidBeginEditing(_ omniBar: OmniBar) -> Bool
+
+    func selectedSuggestion() -> Suggestion?
+    
+    func onVoiceSearchPressed()
+
+}
+
+extension OmniBarDelegate {
+    
+    func onOmniQueryUpdated(_ query: String) {
+        
+    }
+    
+    func onOmniQuerySubmitted(_ query: String) {
+        
+    }
+    
+    func onDismissed() {
+        
+    }
+    
+    func onSiteRatingPressed() {
+        
+    }
+    
+    func onMenuPressed() {
+        
+    }
+    
+    func onBookmarksPressed() {
+        
+    }
+    
+    func onSettingsPressed() {
+        
+    }
+    
+    func onCancelPressed() {
+        
+    }
+    
+    func onTextFieldWillBeginEditing(_ omniBar: OmniBar) {
+        
+    }
+
+    func onTextFieldDidBeginEditing(_ omniBar: OmniBar) {
+        
+    }
+    
+    func onRefreshPressed() {
+    
+    }
+
+    func onSharePressed() {
+    }
+    
+    func onBackPressed() {
+    }
+    
+    func onForwardPressed() {
+    }
+    
 }

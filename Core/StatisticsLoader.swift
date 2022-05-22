@@ -17,20 +17,22 @@
 //  limitations under the License.
 //
 
-
 import Foundation
+import os.log
 
 public class StatisticsLoader {
     
     public typealias Completion =  (() -> Void)
     
     public static let shared = StatisticsLoader()
-    private var statisticsStore: StatisticsStore
-    private let appUrls = AppUrls()
+    
+    private let statisticsStore: StatisticsStore
+    private let appUrls: AppUrls
     private let parser = AtbParser()
     
     init(statisticsStore: StatisticsStore = StatisticsUserDefaults()) {
         self.statisticsStore = statisticsStore
+        self.appUrls = AppUrls(statisticsStore: statisticsStore)
     }
     
     public func load(completion: @escaping Completion = {}) {
@@ -41,11 +43,10 @@ public class StatisticsLoader {
         requestInstallStatistics(completion: completion)
     }
     
-    private func  requestInstallStatistics(completion: @escaping Completion = {}) {
-        APIRequest.request(url: appUrls.atb) { response, error in
-            
+    private func requestInstallStatistics(completion: @escaping Completion = {}) {
+        APIRequest.request(url: appUrls.initialAtb) { response, error in
             if let error = error {
-                Logger.log(text: "Initial atb request failed with error \(error.localizedDescription)")
+                os_log("Initial atb request failed with error %s", log: generalLog, type: .debug, error.localizedDescription)
                 completion()
                 return
             }
@@ -59,41 +60,65 @@ public class StatisticsLoader {
     }
     
     private func requestExti(atb: Atb, completion: @escaping Completion = {}) {
-
-        let installAtb = atb.version + Atb.variant
-        let retentionAtb = atb.version
         
+        let installAtb = atb.version + (statisticsStore.variant ?? "")
         APIRequest.request(url: appUrls.exti(forAtb: installAtb)) { _, error in
             if let error = error {
-                Logger.log(text: "Exti request failed with error \(error.localizedDescription)")
+                os_log("Exti request failed with error %s", log: generalLog, type: .debug, error.localizedDescription)
                 completion()
                 return
             }
-            self.statisticsStore.atb = installAtb
-            self.statisticsStore.retentionAtb = retentionAtb
+            self.statisticsStore.installDate = Date()
+            self.statisticsStore.atb = atb.version
             completion()
         }
     }
     
-    public func refreshRetentionAtb(completion: @escaping Completion = {}) {
+    public func refreshSearchRetentionAtb(completion: @escaping Completion = {}) {
         
-        guard statisticsStore.hasInstallStatistics else {
-            requestInstallStatistics()
+        guard let url = appUrls.searchAtb else {
+            requestInstallStatistics(completion: completion)
             return
         }
         
-        APIRequest.request(url: appUrls.atb) { response, error in
+        APIRequest.request(url: url) { response, error in
             if let error = error {
-                Logger.log(text: "Atb request failed with error \(error.localizedDescription)")
+                os_log("Search atb request failed with error %s", log: generalLog, type: .debug, error.localizedDescription)
                 completion()
                 return
             }
-            
             if let data = response?.data, let atb  = try? self.parser.convert(fromJsonData: data) {
-                self.statisticsStore.retentionAtb = atb.version
+                self.statisticsStore.searchRetentionAtb = atb.version
+                self.storeUpdateVersionIfPresent(atb)
             }
-            
             completion()
+        }
+    }
+    
+    public func refreshAppRetentionAtb(completion: @escaping Completion = {}) {
+        
+        guard let url = appUrls.appAtb else {
+            requestInstallStatistics(completion: completion)
+            return
+        }
+        
+        APIRequest.request(url: url) { response, error in
+            if let error = error {
+                os_log("App atb request failed with error %s", log: generalLog, type: .debug, error.localizedDescription)
+                completion()
+                return
+            }
+            if let data = response?.data, let atb  = try? self.parser.convert(fromJsonData: data) {
+                self.statisticsStore.appRetentionAtb = atb.version
+                self.storeUpdateVersionIfPresent(atb)
+            }
+            completion()
+        }
+    }
+
+    public func storeUpdateVersionIfPresent(_ atb: Atb) {
+        if let updateVersion = atb.updateVersion {
+            statisticsStore.atb = updateVersion
         }
     }
 }

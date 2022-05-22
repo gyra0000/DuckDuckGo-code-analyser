@@ -17,51 +17,87 @@
 //  limitations under the License.
 //
 
-
 import UIKit
 import Core
+import os.log
 
 class AutocompleteViewController: UIViewController {
     
-    weak var delegate: AutocompleteViewControllerDelegate?
+    struct Constants {
+        static let debounceDelay: TimeInterval = 0.1
+        static let minItems = 1
+        static let maxLocalItems = 2
+    }
 
-    private lazy var parser = AutocompleteParser()
+    weak var delegate: AutocompleteViewControllerDelegate?
+    weak var presentationDelegate: AutocompleteViewControllerPresentationDelegate?
+
     private var lastRequest: AutocompleteRequest?
+    private var receivedResponse = false
+    private var pendingRequest = false
     
     fileprivate var query = ""
     fileprivate var suggestions = [Suggestion]()
-    fileprivate let minItems = 1
-    fileprivate let maxItems = 6
+    fileprivate var selectedItem = -1
     
+    private var bookmarksSearch: BookmarksCachingSearch!
+
+    var showBackground = true {
+        didSet {
+            view.backgroundColor = showBackground ? UIColor.black.withAlphaComponent(0.2) : UIColor.clear
+        }
+    }
+
+    var selectedSuggestion: Suggestion? {
+        let state = (suggestions: self.suggestions, selectedIndex: self.selectedItem)
+        return state.suggestions.indices.contains(state.selectedIndex) ? state.suggestions[state.selectedIndex] : nil
+    }
+
     private var hidesBarsOnSwipeDefault = true
+    
+    private let debounce = Debounce(queue: .main, seconds: Constants.debounceDelay)
 
     @IBOutlet weak var tableView: UITableView!
+    var shouldOffsetY = false
     
-    static func loadFromStoryboard() -> AutocompleteViewController {
+    static func loadFromStoryboard(bookmarksCachingSearch: BookmarksCachingSearch) -> AutocompleteViewController {
         let storyboard = UIStoryboard(name: "Autocomplete", bundle: nil)
-        return storyboard.instantiateInitialViewController() as! AutocompleteViewController
+        guard let controller = storyboard.instantiateInitialViewController() as? AutocompleteViewController else {
+            fatalError("Failed to instatiate correct Autocomplete view controller")
+        }
+        controller.bookmarksSearch = bookmarksCachingSearch
+        return controller
     }
-    
+
     override func viewDidLoad() {
         super.viewDidLoad()
         configureTableView()
+        applyTheme(ThemeManager.shared.currentTheme)
     }
     
     private func configureTableView() {
         tableView.backgroundColor = UIColor.clear
         tableView.tableFooterView = UIView()
+        tableView.sectionFooterHeight = 1.0 / UIScreen.main.scale
     }
-    
+
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
+        adjustForInCall()
         configureNavigationBar()
     }
-    
+
+    // If auto complete is used after the in-call banner is shown it has the wrong y position (should be zero)
+    private func adjustForInCall() {
+        let frame = self.view.frame
+        self.view.frame = CGRect(x: 0, y: shouldOffsetY ? 45.5 : 0, width: frame.width, height: frame.height)
+    }
+
     private func configureNavigationBar() {
         hidesBarsOnSwipeDefault = navigationController?.hidesBarsOnSwipe ?? hidesBarsOnSwipeDefault
         navigationController?.hidesBarsOnSwipe = false
     }
-    
+
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         resetNaviagtionBar()
@@ -70,40 +106,76 @@ class AutocompleteViewController: UIViewController {
     private func resetNaviagtionBar() {
         navigationController?.hidesBarsOnSwipe = hidesBarsOnSwipeDefault
     }
-    
+
     func updateQuery(query: String) {
         self.query = query
+        selectedItem = -1
         cancelInFlightRequests()
-        requestSuggestions(query: query)
+        debounce.schedule { [weak self] in
+            self?.requestSuggestions(query: query)
+        }
     }
     
+    func willDismiss(with query: String) {
+        guard selectedItem != -1, selectedItem < suggestions.count else { return }
+        
+        let suggestion = suggestions[selectedItem]
+        if let url = suggestion.url {
+            if query == url.absoluteString {
+                firePixel(selectedSuggestion: suggestion)
+            }
+        } else if query == suggestion.suggestion {
+            firePixel(selectedSuggestion: suggestion)
+        }
+    }
+
     @IBAction func onPlusButtonPressed(_ button: UIButton) {
         let suggestion = suggestions[button.tag]
-        delegate?.autocomplete(pressedPlusButtonForSuggestion: suggestion.suggestion)
+        delegate?.autocomplete(pressedPlusButtonForSuggestion: suggestion)
     }
-    
+
     private func cancelInFlightRequests() {
         if let inFlightRequest = lastRequest {
             inFlightRequest.cancel()
+            lastRequest = nil
         }
     }
-    
+
     private func requestSuggestions(query: String) {
-        lastRequest = AutocompleteRequest(query: query, parser: parser)
-        lastRequest!.execute() { [weak self] (suggestions, error) in
-            guard let suggestions = suggestions, error == nil else {
-                Logger.log(items: error ?? "Failed to retrieve suggestions")
-                return
+        selectedItem = -1
+        tableView.reloadData()
+        pendingRequest = true
+        
+        lastRequest = AutocompleteRequest(query: query)
+        lastRequest!.execute { [weak self] (suggestions, error) in
+            guard let strongSelf = self else { return }
+            
+            strongSelf.bookmarksSearch.search(query: query) { matches in
+                let notQueryMatches = matches.filter { $0.url?.absoluteString != query }
+                let filteredMatches = notQueryMatches.filter { $0.displayTitle != nil }.prefix(Constants.maxLocalItems)
+                let localSuggestions = filteredMatches.map { Suggestion(source: .local, suggestion: $0.displayTitle!, url: $0.url) }
+                
+                guard let suggestions = suggestions, error == nil else {
+                    os_log("%s", log: generalLog, type: .debug, error?.localizedDescription ?? "Failed to retrieve suggestions")
+                    self?.updateSuggestions(localSuggestions)
+                    return
+                }
+
+                let combinedSuggestions = localSuggestions + suggestions
+                strongSelf.updateSuggestions(Array(combinedSuggestions))
+                strongSelf.pendingRequest = false
             }
-            self?.updateSuggestions(suggestions)
         }
     }
-    
+
     private func updateSuggestions(_ newSuggestions: [Suggestion]) {
+        receivedResponse = true
         suggestions = newSuggestions
+        tableView.contentOffset = .zero
         tableView.reloadData()
+        presentationDelegate?.autocompleteDidChangeContentHeight(height: tableView.contentSize.height)
     }
-    
+
     @IBAction func onAutocompleteDismissed(_ sender: Any) {
         delegate?.autocompleteWasDismissed()
     }
@@ -117,35 +189,70 @@ extension AutocompleteViewController: UITableViewDataSource {
         }
         return suggestionsCell(forIndexPath: indexPath)
     }
-    
+
     private func suggestionsCell(forIndexPath indexPath: IndexPath) -> UITableViewCell {
         let type = SuggestionTableViewCell.reuseIdentifier
-        let cell = tableView.dequeueReusableCell(withIdentifier: type, for: indexPath) as! SuggestionTableViewCell
-        cell.updateFor(query: query, suggestion: suggestions[indexPath.row])
+        guard let cell = tableView.dequeueReusableCell(withIdentifier: type, for: indexPath) as? SuggestionTableViewCell else {
+            fatalError("Failed to dequeue \(type) as SuggestionTableViewCell")
+        }
+        
+        let currentTheme = ThemeManager.shared.currentTheme
+        
+        cell.updateFor(query: query, suggestion: suggestions[indexPath.row], with: currentTheme)
         cell.plusButton.tag = indexPath.row
+        
+        let color = indexPath.row == selectedItem ? currentTheme.tableCellSelectedColor : currentTheme.tableCellBackgroundColor
+        
+        cell.backgroundColor = color
+        cell.tintColor = currentTheme.autocompleteCellAccessoryColor
+        cell.setHighlightedStateBackgroundColor(currentTheme.tableCellHighlightedBackgroundColor)
+        
         return cell
     }
-    
+
     private func noSuggestionsCell(forIndexPath indexPath: IndexPath) -> UITableViewCell {
         let type = NoSuggestionsTableViewCell.reuseIdentifier
-        return tableView.dequeueReusableCell(withIdentifier: type, for: indexPath)
+        guard let cell = tableView.dequeueReusableCell(withIdentifier: type, for: indexPath) as? NoSuggestionsTableViewCell else {
+            fatalError("Failed to dequeue \(type) as NoSuggestionTableViewCell")
+        }
+        
+        let currentTheme = ThemeManager.shared.currentTheme
+        cell.backgroundColor = currentTheme.tableCellBackgroundColor
+        cell.tintColor = currentTheme.autocompleteCellAccessoryColor
+        cell.label?.textColor = currentTheme.tableCellTextColor
+        cell.setHighlightedStateBackgroundColor(currentTheme.tableCellHighlightedBackgroundColor)
+        
+        return cell
+    }
+
+    func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
+        return receivedResponse ? max(Constants.minItems, suggestions.count) : 0
     }
     
-    func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        if suggestions.isEmpty {
-            return minItems
+    private func firePixel(selectedSuggestion: Suggestion) {
+        let resultsIncludeBookmarks: Bool
+        if let firstSuggestion = suggestions.first {
+            resultsIncludeBookmarks = firstSuggestion.source == .local
+        } else {
+            resultsIncludeBookmarks = false
         }
-        if suggestions.count > maxItems {
-            return maxItems
+        
+        let params = [PixelParameters.autocompleteBookmarkCapable: bookmarksSearch.hasData ? "true" : "false",
+                      PixelParameters.autocompleteIncludedLocalResults: resultsIncludeBookmarks ? "true" : "false"]
+        
+        if selectedSuggestion.source == .local {
+            Pixel.fire(pixel: .autocompleteSelectedLocal, withAdditionalParameters: params)
+        } else {
+            Pixel.fire(pixel: .autocompleteSelectedRemote, withAdditionalParameters: params)
         }
-        return suggestions.count
     }
 }
 
 extension AutocompleteViewController: UITableViewDelegate {
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         let suggestion = suggestions[indexPath.row]
-        delegate?.autocomplete(selectedSuggestion: suggestion.suggestion)
+        firePixel(selectedSuggestion: suggestion)
+        delegate?.autocomplete(selectedSuggestion: suggestion)
     }
 }
 
@@ -153,4 +260,37 @@ extension AutocompleteViewController: UIGestureRecognizerDelegate {
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
         return tableView == touch.view
     }
+}
+
+extension AutocompleteViewController: Themable {
+    func decorate(with theme: Theme) {
+        tableView.separatorColor = theme.tableCellSeparatorColor
+        tableView.reloadData()
+    }
+}
+
+extension AutocompleteViewController {
+ 
+    func keyboardMoveSelectionDown() {
+        guard !pendingRequest, !suggestions.isEmpty else { return }
+        selectedItem = (selectedItem + 1 >= itemCount()) ? 0 : selectedItem + 1
+        delegate?.autocomplete(highlighted: suggestions[selectedItem], for: query)
+        tableView.reloadData()
+    }
+
+    func keyboardMoveSelectionUp() {
+        guard !pendingRequest, !suggestions.isEmpty else { return }
+        selectedItem = (selectedItem - 1 < 0) ? itemCount() - 1 : selectedItem - 1
+        delegate?.autocomplete(highlighted: suggestions[selectedItem], for: query)
+        tableView.reloadData()
+    }
+    
+    func keyboardEscape() {
+        delegate?.autocompleteWasDismissed()
+    }
+    
+    private func itemCount() -> Int {
+        return suggestions.count
+    }
+
 }

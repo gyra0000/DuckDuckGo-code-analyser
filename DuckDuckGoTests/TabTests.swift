@@ -17,19 +17,115 @@
 //  limitations under the License.
 //
 
-
 import XCTest
 @testable import DuckDuckGo
 @testable import Core
 
 class TabTests: XCTestCase {
-    
+
     struct Constants {
         static let title = "A title"
         static let url = URL(string: "https://example.com")!
         static let differentUrl = URL(string: "https://aDifferentUrl.com")!
     }
+
+    func testWhenDesktopPropertyChangesThenObserversNotified() {
+        let observer = MockTabObserver()
+
+        let tab = Tab(link: link())
+        tab.addObserver(observer)
+        tab.isDesktop = true
+
+        XCTAssertNotNil(observer.didChangeTab)
+
+    }
+
+    func testWhenDesktopModeToggledThenPropertyIsUpdated() {
+        _ = AppWidthObserver.shared.willResize(toWidth: UIScreen.main.bounds.width)
+
+        let tab = Tab(link: link())
+
+        if AppWidthObserver.shared.isLargeWidth {
+            XCTAssertTrue(tab.isDesktop)
+            tab.toggleDesktopMode()
+            XCTAssertFalse(tab.isDesktop)
+            tab.toggleDesktopMode()
+            XCTAssertTrue(tab.isDesktop)
+        } else {
+            XCTAssertFalse(tab.isDesktop)
+            tab.toggleDesktopMode()
+            XCTAssertTrue(tab.isDesktop)
+            tab.toggleDesktopMode()
+            XCTAssertFalse(tab.isDesktop)
+        }
+    }
+
+    func testWhenEncodedWithDesktopPropertyThenDecodesSuccessfully() {
+        guard let data = try? NSKeyedArchiver.archivedData(withRootObject: Tab(link: link(), viewed: false, desktop: true),
+                                                           requiringSecureCoding: false) else {
+            XCTFail("Data is nil")
+            return
+        }
+        XCTAssertFalse(data.isEmpty)
+
+        let tab = try? NSKeyedUnarchiver.unarchiveTopLevelObjectWithData(data) as? Tab
+        
+        XCTAssertNotNil(tab?.link)
+        XCTAssertFalse(tab?.viewed ?? true)
+        XCTAssertTrue(tab?.isDesktop ?? false)
+    }
+
+    /// This test supports the migration scenario where desktop was not a property of tab
+    func testWhenEncodedWithoutDesktopPropertyThenDecodesSuccessfully() {
+        let tab = Tab(coder: CoderStub(properties: ["link": link(), "viewed": false]))
+        XCTAssertNotNil(tab?.link)
+        XCTAssertFalse(tab?.viewed ?? true)
+        XCTAssertFalse(tab?.isDesktop ?? true)
+    }
     
+    func testWhenTabObserverIsOutOfScopeThenUpdatesAreSuccessful() {
+        var observer: MockTabObserver? = MockTabObserver()
+        let tab = Tab(link: link())
+        tab.addObserver(observer!)
+        observer = nil
+        tab.viewed = true
+        XCTAssertTrue(tab.viewed)
+    }
+    
+    func testWhenTabLinkChangesThenObserversAreNotified() {
+        let observer = MockTabObserver()
+        
+        let tab = Tab(link: link())
+        tab.addObserver(observer)
+        tab.link = Link(title: nil, url: Constants.url)
+
+        XCTAssertNotNil(observer.didChangeTab)
+    }
+
+    func testWhenTabViewedChangesThenObserversAreNotified() {
+        let observer = MockTabObserver()
+        
+        let tab = Tab(link: link())
+        tab.addObserver(observer)
+        tab.viewed = true
+        
+        XCTAssertNotNil(observer.didChangeTab)
+    }
+
+    func testWhenTabWithViewedDecodedThenItDecodesSuccessfully() {
+
+        let tab = Tab(coder: CoderStub(properties: ["link": link(), "viewed": false]))
+        XCTAssertNotNil(tab?.link)
+        XCTAssertFalse(tab?.viewed ?? true)
+    }
+
+    func testWhenTabEncodedBeforeViewedPropertyAddedIsDecodedThenItDecodesSuccessfully() {
+
+        let tab = Tab(coder: CoderStub(properties: ["link": link()]))
+        XCTAssertNotNil(tab?.link)
+        XCTAssertTrue(tab?.viewed ?? false)
+    }
+
     func testWhenSameObjectThenEqualsPasses() {
         let link = Link(title: Constants.title, url: Constants.url)
         let tab = Tab(link: link)
@@ -47,4 +143,41 @@ class TabTests: XCTestCase {
         let rhs = Tab(link: Link(title: Constants.title, url: Constants.differentUrl))
         XCTAssertNotEqual(lhs, rhs)
     }
+
+    private func link() -> Link {
+        return Link(title: "title", url: URL(string: "http://example.com")!)
+    }
+
+}
+
+private class CoderStub: NSCoder {
+
+    private let properties: [String: Any]
+
+    init(properties: [String: Any]) {
+        self.properties = properties
+    }
+
+    override func containsValue(forKey key: String) -> Bool {
+        return properties.keys.contains(key)
+    }
+
+    override func decodeObject(forKey key: String) -> Any? {
+        return properties[key]
+    }
+
+    override func decodeBool(forKey key: String) -> Bool {
+        return (properties[key] as? Bool)!
+    }
+    
+}
+
+private class MockTabObserver: NSObject, TabObserver {
+    
+    var didChangeTab: Tab?
+    
+    func didChange(tab: Tab) {
+        didChangeTab = tab
+    }
+    
 }

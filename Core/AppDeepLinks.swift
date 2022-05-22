@@ -17,32 +17,60 @@
 //  limitations under the License.
 //
 
-
 import Foundation
 
 public struct AppDeepLinks {
-    
-    public static let launch = "ddgLaunch://"
-    
+
+    public static let newSearch = "ddgNewSearch://"
+
     public static let quickLink = "ddgQuickLink://"
+
+    public static let bookmarks = "ddgBookmarks://"
     
-    public static let privacyPolicy = URL(string: "\(AppDeepLinks.quickLink)https://duckduckgo.com/privacy")!
-    
-    public static func isLaunch(url: URL) -> Bool {
-        if let scheme = url.scheme {
-            return AppDeepLinks.launch.contains(scheme)
-        }
-        return false
+    public static let fire = "ddgFire://"
+
+    public static let launchFavorite = "ddgFavorite://"
+
+    public static let addFavorite = "ddgAddFavorite://"
+
+    public static let aboutLink = URL(string: "\(AppDeepLinks.quickLink)duckduckgo.com/about")!
+
+    public static func isLaunchFavorite(url: URL) -> Bool {
+        return isUrl(url, deepLink: launchFavorite)
     }
-    
+
+    public static func isNewSearch(url: URL) -> Bool {
+        return isUrl(url, deepLink: AppDeepLinks.newSearch)
+    }
+
     public static func isQuickLink(url: URL) -> Bool {
+        return isUrl(url, deepLink: AppDeepLinks.quickLink)
+    }
+    
+    public static func isBookmarks(url: URL) -> Bool {
+        return isUrl(url, deepLink: AppDeepLinks.bookmarks)
+    }
+    
+    public static func isFire(url: URL) -> Bool {
+        return isUrl(url, deepLink: AppDeepLinks.fire)
+    }
+
+    public static func isAddFavorite(url: URL) -> Bool {
+        return isUrl(url, deepLink: AppDeepLinks.addFavorite)
+    }
+    
+    private static func isUrl(_ url: URL, deepLink: String) -> Bool {
         if let scheme = url.scheme {
-            return AppDeepLinks.quickLink.contains(scheme)
+            return deepLink.lowercased().contains(scheme.lowercased())
         }
         return false
     }
-    
+
     public static func query(fromQuickLink url: URL) -> String {
-        return url.absoluteString.replacingOccurrences(of: quickLink, with: "")
+        return url.absoluteString.replacingOccurrences(of: quickLink, with: "", options: .caseInsensitive)
+    }
+
+    public static func query(fromLaunchFavorite url: URL) -> String {
+        return url.absoluteString.replacingOccurrences(of: launchFavorite, with: "", options: .caseInsensitive)
     }
 }

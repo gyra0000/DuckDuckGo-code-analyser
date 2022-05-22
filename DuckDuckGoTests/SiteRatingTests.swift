@@ -17,117 +17,242 @@
 //  limitations under the License.
 //
 
-
 import XCTest
+import TrackerRadarKit
+import BrowserServicesKit
 @testable import Core
 
 class SiteRatingTests: XCTestCase {
-    
+
     struct Url {
         static let noHost = URL(string: "nohost")!
         static let withHost = URL(string: "http://host")!
         static let http = URL(string: "http://example.com")!
         static let https = URL(string: "https://example.com")!
+        static let httpsWithPath = URL(string: "https://example.com/path/to/resource")!
+        static let international = URL(string: "https://82.xn--b1aew.xn--p1ai/")!
+        static let internationalWithPath = URL(string: "https://82.xn--b1aew.xn--p1ai/path/to/resource")!
         static let google = URL(string: "https://google.com")!
         static let googlemail = URL(string: "https://googlemail.com")!
         static let tracker = "http://www.atracker.com"
         static let differentTracker = "http://www.anothertracker.com"
     }
-    
+
     struct TrackerMock {
-        static let tracker = Tracker(url: Url.tracker, parentDomain: Url.tracker)
-        static let differentTracker = Tracker(url: Url.differentTracker, parentDomain: Url.differentTracker)
+        
+        static let knownTracker1 = KnownTracker.build(domain: "tracker1.com", ownerName: "Owner 1", category: "tracker")
+        static let knownTracker2 = KnownTracker.build(domain: "tracker1.com", ownerName: "Owner 2", category: "tracker")
+        
+        static let entity1 = Entity(displayName: "Entity 1", domains: nil, prevalence: 1)
+        static let entity2 = Entity(displayName: "Entity 2", domains: nil, prevalence: 2)
+
+        static let blockedTracker = DetectedTracker(url: Url.tracker,
+                                                    knownTracker: knownTracker1,
+                                                    entity: entity1,
+                                                    blocked: true,
+                                                    pageUrl: Url.https.absoluteString)
+        static let unblockedTracker = DetectedTracker(url: Url.tracker,
+                                                      knownTracker: knownTracker1,
+                                                      entity: entity1,
+                                                      blocked: false,
+                                                      pageUrl: Url.https.absoluteString)
+        static let differentTracker = DetectedTracker(url: Url.differentTracker,
+                                                      knownTracker: knownTracker2,
+                                                      entity: entity2,
+                                                      blocked: true,
+                                                      pageUrl: Url.https.absoluteString)
+                                                      
+    }
+
+    fileprivate let classATOS = MockTermsOfServiceStore().add(domain: "example.com", classification: .a, score: -100)
+
+    override func setUp() {
+        super.setUp()
+        
+        GradeCache.shared.reset()
+    }
+
+    func testWhenSiteIsForSameInternationalDomainWithDifferentPathThenReturnsTrue() {
+        
+        let testee = SiteRating(url: Url.international)
+        XCTAssertTrue(testee.isFor(Url.internationalWithPath))
+        
+    }
+
+    func testWhenSiteIsForSameDomainWithDifferentPathThenReturnsTrue() {
+        
+        let testee = SiteRating(url: Url.https)
+        XCTAssertTrue(testee.isFor(Url.httpsWithPath))
+        
     }
     
+    func testWhenEntityHasHighPrevalenceThenScoreSetCorrectly() {
+        let entityMappingLow = MockEntityMapping(entity: "Google", prevalence: 100)
+        let testeeHighPrevalence = SiteRating(url: Url.googlemail, entityMapping: entityMappingLow)
+        let highPrevalenceScore = testeeHighPrevalence.scores.site.score
+
+        let entityMappingHigh = MockEntityMapping(entity: "Google", prevalence: 1)
+        let testeeLowPrevalence = SiteRating(url: Url.googlemail, entityMapping: entityMappingHigh)
+        let lowPevalenceScore = testeeLowPrevalence.scores.site.score
+
+        XCTAssertTrue(highPrevalenceScore > lowPevalenceScore)
+    }
+    
+    func testWhenUrlHasTosThenTosReturned() {
+        let term = TermsOfService(classification: .d, score: -100, goodReasons: [], badReasons: [ "bad reason" ])
+        let tosdrStore = MockTermsOfServiceStore(terms: [Url.googlemail.host!: term ])
+        let entityMapping = MockEntityMapping(entity: "Google")
+        let privacyPractices = PrivacyPractices(termsOfServiceStore: tosdrStore, entityMapping: entityMapping)
+        let testee = SiteRating(url: Url.googlemail, entityMapping: entityMapping, privacyPractices: privacyPractices)
+        XCTAssertEqual(.poor, testee.privacyPractice.summary)
+    }
+
     func testWhenUrlContainHostThenInitSucceeds() {
         let testee = SiteRating(url: Url.withHost)
         XCTAssertNotNil(testee)
     }
-    
-    func testWhenUrlDoesNotContainHostThenInitFails() {
-        let testee = SiteRating(url: Url.noHost)
-        XCTAssertNil(testee)
-    }
-    
+
     func testWhenHttpThenHttpsIsFalse() {
-        let testee = SiteRating(url: Url.http)!
+        let testee = SiteRating(url: Url.http)
         XCTAssertFalse(testee.https)
     }
-    
+
     func testWhenHttpsThenHttpsIsTrue() {
-        let testee = SiteRating(url: Url.https)!
+        let testee = SiteRating(url: Url.https)
         XCTAssertTrue(testee.https)
     }
-    
+
     func testCountsAreInitiallyZero() {
-        let testee = SiteRating(url: Url.https)!
+        let testee = SiteRating(url: Url.https)
         XCTAssertEqual(testee.totalTrackersDetected, 0)
-        XCTAssertEqual(testee.uniqueTrackersDetected, 0)
         XCTAssertEqual(testee.totalTrackersBlocked, 0)
-        XCTAssertEqual(testee.uniqueTrackersBlocked, 0)
+        XCTAssertEqual(testee.installedSurrogates.count, 0)
     }
-    
-    func testWhenUniqueTrackersAreBlockedThenAllDetectionAndBlockCountsIncremenet() {
-        let testee = SiteRating(url: Url.https)!
-        testee.trackerDetected(TrackerMock.tracker, blocked: true)
-        testee.trackerDetected(TrackerMock.differentTracker, blocked: true)
-        XCTAssertEqual(testee.totalTrackersDetected, 2)
-        XCTAssertEqual(testee.uniqueTrackersDetected, 2)
+
+    func testWhenUniqueTrackersAreBlockedThenBlockedCountsIncremented() {
+        let testee = SiteRating(url: Url.https)
+        testee.trackerDetected(TrackerMock.blockedTracker)
+        testee.trackerDetected(TrackerMock.differentTracker)
+        XCTAssertEqual(testee.totalTrackersDetected, 0)
         XCTAssertEqual(testee.totalTrackersBlocked, 2)
-        XCTAssertEqual(testee.uniqueTrackersBlocked, 2)
+        XCTAssertEqual(testee.installedSurrogates.count, 0)
     }
-    
+
     func testWhenRepeatTrackersAreBlockedThenUniqueCountsOnlyIncrementOnce() {
-        let testee = SiteRating(url: Url.https)!
-        testee.trackerDetected(TrackerMock.tracker, blocked: true)
-        testee.trackerDetected(TrackerMock.tracker, blocked: true)
-        XCTAssertEqual(testee.totalTrackersDetected, 2)
-        XCTAssertEqual(testee.uniqueTrackersDetected, 1)
-        XCTAssertEqual(testee.totalTrackersBlocked, 2)
-        XCTAssertEqual(testee.uniqueTrackersBlocked, 1)
+        let testee = SiteRating(url: Url.https)
+        testee.trackerDetected(TrackerMock.blockedTracker)
+        testee.trackerDetected(TrackerMock.blockedTracker)
+        XCTAssertEqual(testee.totalTrackersDetected, 0)
+        XCTAssertEqual(testee.totalTrackersBlocked, 1)
+        XCTAssertEqual(testee.installedSurrogates.count, 0)
     }
-    
-    func testWhenNotBlockerThenDetectedCountsIncrementButBlockCountsDoNot() {
-        let testee = SiteRating(url: Url.https)!
-        testee.trackerDetected(TrackerMock.tracker, blocked: false)
+
+    func testWhenRepeatTrackersAreDetectedThenUniqueCountsOnlyIncrementOnce() {
+        let testee = SiteRating(url: Url.https)
+        testee.trackerDetected(TrackerMock.unblockedTracker)
+        testee.trackerDetected(TrackerMock.unblockedTracker)
         XCTAssertEqual(testee.totalTrackersDetected, 1)
-        XCTAssertEqual(testee.uniqueTrackersDetected, 1)
         XCTAssertEqual(testee.totalTrackersBlocked, 0)
-        XCTAssertEqual(testee.uniqueTrackersBlocked, 0)
+        XCTAssertEqual(testee.installedSurrogates.count, 0)
     }
     
-    func testWhenUrlIsAMajorNetworkThenMajorNetworkReturned() {
-        let testee = SiteRating(url: Url.google, disconnectMeTrackers: [:])!
-        XCTAssertNotNil(testee.majorTrackingNetwork)
-        XCTAssertEqual(testee.majorTrackingNetwork?.domain, "google.com")
-        XCTAssertEqual(testee.majorTrackingNetwork?.perentageOfPages, 55)
+    func testWhenSurrogateIsInstalledThenItIsStored() {
+        let testee = SiteRating(url: Url.https)
+        testee.surrogateInstalled("hostname")
+        XCTAssertEqual(testee.totalTrackersDetected, 0)
+        XCTAssertEqual(testee.totalTrackersBlocked, 0)
+        XCTAssertEqual(testee.installedSurrogates.count, 1)
+    }
+
+    func testWhenUrlDoeNotHaveTosThenPrivacyPracticesSummaryIsUnknown() {
+        let testee = SiteRating(url: Url.http)
+        XCTAssertEqual(.unknown, testee.privacyPractice.summary)
     }
     
-    func testWhenUrlIsAChildOfAMajorNetworkThenMajorNetworkReturned() {
-        let tracker = Tracker(url: "googlemail.com", parentDomain: "google.com")
-        let testee = SiteRating(url: Url.googlemail, disconnectMeTrackers: [tracker.url: tracker])!
-        XCTAssertNotNil(testee.majorTrackingNetwork)
-        XCTAssertEqual(testee.majorTrackingNetwork?.domain, "google.com")
-        XCTAssertEqual(testee.majorTrackingNetwork?.perentageOfPages, 55)
+    func testWhenHttpsAndIsForcedThenEncryptionTypeIsForced() {
+        let testee = SiteRating(url: Url.https, httpsForced: true)
+        XCTAssertEqual(.forced, testee.encryptionType)
+    }
+
+    func testWhenHttpsAndNotHasOnlySecureContentAndIsForcedThenEncryptionTypeIsMixed() {
+        let testee = SiteRating(url: Url.https, httpsForced: true)
+        testee.hasOnlySecureContent = false
+        XCTAssertEqual(.mixed, testee.encryptionType)
+    }
+
+    func testWhenHttpsAndNotHasOnlySecureContentThenEncryptionTypeIsMixed() {
+        let testee = SiteRating(url: Url.https)
+        testee.hasOnlySecureContent = false
+        XCTAssertEqual(.mixed, testee.encryptionType)
+    }
+
+    func testWhenHttpsThenEncryptionTypeIsEncrypted() {
+        let testee = SiteRating(url: Url.https)
+        XCTAssertEqual(.encrypted, testee.encryptionType)
+    }
+
+    func testWhenHttpThenEncryptionTypeIsUnencrypted() {
+        let testee = SiteRating(url: Url.http)
+        XCTAssertEqual(.unencrypted, testee.encryptionType)
     }
     
-    func testWhenUrlIsIsNotAssociatedWithAMajorNetworkThenNilReturned() {
-        let testee = SiteRating(url: Url.http, disconnectMeTrackers: [:])!
-        XCTAssertNil(testee.majorTrackingNetwork)
+    func testWhenUrlBelongsToMajorNetworkThenIsMajorNetworkReturnsTrue() {
+        let testee = SiteRating(url: Url.http,
+                                entityMapping: MockEntityMapping(entity: "TrickyAds", prevalence: 100),
+                                privacyPractices: PrivacyPractices(termsOfServiceStore: classATOS))
+        XCTAssertTrue(testee.isMajorTrackerNetwork)
     }
     
-    func testWhenUrlHasTosThenTosReturned() {
-        let testee = SiteRating(url: Url.google)!
-        XCTAssertNotNil(testee.termsOfService)
+    func testWhenWorseScoreIsCachedForBeforeScoreItIsUsed() {
+        let scores = Grade.Scores(site: Grade.Score(grade: .d, httpsScore: 0, privacyScore: 0, score: 66, trackerScore: 0),
+                                  enhanced: Grade.Score(grade: .a, httpsScore: 0, privacyScore: 0, score: 0, trackerScore: 0))
+        
+        _ = GradeCache.shared.add(url: Url.https, scores: scores)
+        
+        let testee = SiteRating(url: Url.https, privacyPractices: PrivacyPractices(termsOfServiceStore: MockTermsOfServiceStore()))
+        let site = testee.scores.site
+        XCTAssertEqual(66, site.score)
     }
     
-    func testWhenUrlDoeNotHaveTosThenTosIsNil() {
-        let testee = SiteRating(url: Url.http)!
-        XCTAssertNil(testee.termsOfService)
+    func testWhenIncorrectPageURLThenTrackerNotLogged() {
+        let testee = SiteRating(url: Url.http)
+        testee.trackerDetected(TrackerMock.differentTracker)
+        testee.trackerDetected(TrackerMock.unblockedTracker)
+        XCTAssertEqual(testee.totalTrackersDetected, 0)
+        XCTAssertEqual(testee.totalTrackersBlocked, 0)
+        XCTAssertEqual(testee.installedSurrogates.count, 0)
+    }
+
+}
+
+private class MockTermsOfServiceStore: TermsOfServiceStore {
+    
+    var terms = [String: TermsOfService]()
+    
+    init(terms: [String: TermsOfService]) {
+        self.terms = terms
     }
     
-    func testWhenUrlIsNotAMajorNetworkThenMajorNetworkIsNil() {
-        let testee = SiteRating(url: Url.http)!
-        XCTAssertNil(testee.majorTrackingNetwork)
+    init() {
     }
+    
+    func add(domain: String,
+             classification: TermsOfService.Classification?,
+             score: Int,
+             goodReasons: [String] = [],
+             badReasons: [String] = []) -> MockTermsOfServiceStore {
+        
+        terms[domain] = TermsOfService(classification: classification, score: score, goodReasons: goodReasons, badReasons: badReasons)
+        return self
+    }
+    
+}
+
+private extension KnownTracker {
+    
+    static func build(domain: String, ownerName: String, category: String) -> KnownTracker {
+        let owner = KnownTracker.Owner(name: ownerName, displayName: ownerName)
+        return KnownTracker(domain: domain, defaultAction: nil, owner: owner, prevalence: nil, subdomains: nil, categories: [category], rules: nil)
+    }
+    
 }

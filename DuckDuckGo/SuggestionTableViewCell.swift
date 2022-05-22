@@ -17,40 +17,62 @@
 //  limitations under the License.
 //
 
-
 import UIKit
 import Core
 
 class SuggestionTableViewCell: UITableViewCell {
     
+    struct Constants {
+        static let cellHeight: CGFloat = 46.0
+    }
+
     static let reuseIdentifier = "SuggestionTableViewCell"
-    
+
     @IBOutlet weak var label: UILabel!
     @IBOutlet weak var typeImage: UIImageView!
     @IBOutlet weak var plusButton: UIButton!
-    
-    func updateFor(query: String, suggestion: Suggestion) {
-        let text = suggestion.suggestion
-        if URL.isWebUrl(text: text) {
-            typeImage.image = #imageLiteral(resourceName: "GlobeSmall")
-            plusButton.isHidden = true
-        } else {
-            typeImage.image = #imageLiteral(resourceName: "SearchLoupeMini")
-            plusButton.isHidden = false
-        }
-        styleText(query: query, text: suggestion.suggestion)
-    }
-    
-    private func styleText(query: String, text: String) {
 
-        let attributes = [
-            NSAttributedStringKey.font: UIFont.semiBoldAppFont(ofSize: 16),
-            NSAttributedStringKey.foregroundColor: UIColor.white
+    func updateFor(query: String, suggestion: Suggestion, with theme: Theme) {
+
+        switch suggestion.source {
+        case .local:
+            typeImage.image = UIImage(named: "BookmarkSuggestion")
+        case .remote:
+            if suggestion.url != nil {
+                typeImage.image = UIImage(named: "SuggestGlobe")
+            } else {
+                typeImage.image = UIImage(named: "SuggestLoupe")
+            }
+        }
+        
+        styleText(query: query,
+                  text: suggestion.suggestion,
+                  regularColor: theme.tableCellTextColor,
+                  suggestionColor: theme.autocompleteSuggestionTextColor)
+    }
+
+    private func styleText(query: String, text: String, regularColor: UIColor, suggestionColor: UIColor) {
+
+        let regularAttributes = [
+            NSAttributedString.Key.font: UIFont.semiBoldAppFont(ofSize: 16),
+            NSAttributedString.Key.foregroundColor: regularColor
         ]
         
-        let count = (query.length() < text.length()) ? query.length() : text.length()
-        let text = NSMutableAttributedString(string: text)
-        text.addAttributes(attributes, range: NSMakeRange(0, count))
-        label.attributedText = text
+        let boldAttributes = [
+            NSAttributedString.Key.font: UIFont.boldAppFont(ofSize: 16),
+            NSAttributedString.Key.foregroundColor: suggestionColor
+        ]
+
+        let newText = NSMutableAttributedString(string: text)
+        
+        let queryLength = query.length()
+        if queryLength < newText.length, text.hasPrefix(query) {
+            newText.addAttributes(regularAttributes, range: NSRange(location: 0, length: queryLength))
+            newText.addAttributes(boldAttributes, range: NSRange(location: queryLength, length: newText.length - queryLength))
+        } else {
+            newText.addAttributes(regularAttributes, range: NSRange(location: 0, length: newText.length))
+        }
+        
+        label.attributedText = newText
     }
 }

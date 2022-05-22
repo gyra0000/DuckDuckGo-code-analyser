@@ -17,55 +17,151 @@
 //  limitations under the License.
 //
 
-
 import Foundation
-import Alamofire
-
+import os.log
 
 public typealias APIRequestCompletion = (APIRequest.Response?, Error?) -> Void
+public typealias APIRequestResult = Result<APIRequest.Response, Error>
 
 public class APIRequest {
-
+    
+    private static var defaultCallbackQueue: OperationQueue = {
+        let queue = OperationQueue()
+        queue.name = "APIRequest default callback queue"
+        queue.qualityOfService = .utility
+        queue.maxConcurrentOperationCount = 1
+        return queue
+    }()
+    
+    private static let defaultSession = URLSession(configuration: .default, delegate: nil, delegateQueue: defaultCallbackQueue)
+    private static let mainThreadCallbackSession = URLSession(configuration: .default, delegate: nil, delegateQueue: OperationQueue.main)
+    
     public struct Response {
-
-        var data: Data?
-        var etag: String?
-
+        
+        public var data: Data?
+        public var etag: String?
+        public var urlResponse: URLResponse?
+        
     }
-
-    struct HeaderNames {
-
-        static let etag = "ETag"
-
+    
+    public enum APIRequestError: Error {
+        case noResponseOrError
     }
-
-    static func request(url: URL, completion: @escaping APIRequestCompletion) {
-        Logger.log(text: "Requesting \(url)")
-
-        Alamofire.request(url)
-            .validate(statusCode: 200..<300)
-            .responseData(queue: DispatchQueue.global(qos: .utility)) { response in
-
-                Logger.log(text: "Request for \(url) completed with response code: \(String(describing: response.response?.statusCode)) and headers \(String(describing: response.response?.allHeaderFields))")
-
-                if let error = response.error {
-                    completion(nil, error)
+    
+    public enum HTTPMethod: String {
+        case get = "GET"
+        case head = "HEAD"
+        case post = "POST"
+        case put = "PUT"
+        case delete = "DELETE"
+        case connect = "CONNECT"
+        case options = "OPTIONS"
+        case trace = "TRACE"
+        case patch = "PATCH"
+    }
+    
+    public static func request(url: URL,
+                               method: HTTPMethod = .get,
+                               parameters: [String: String]? = nil,
+                               headers: HTTPHeaders = APIHeaders().defaultHeaders,
+                               httpBody: Data? = nil,
+                               callBackOnMainThread: Bool = false,
+                               timeoutInterval: TimeInterval = 60.0) async -> APIRequestResult {
+        await withCheckedContinuation { continuation in
+            request(url: url,
+                    method: method,
+                    parameters: parameters,
+                    headers: headers,
+                    httpBody: httpBody,
+                    timeoutInterval: timeoutInterval,
+                    callBackOnMainThread: callBackOnMainThread) { response, error in
+                if let error = error {
+                    continuation.resume(returning: .failure(error))
+                } else if let response = response {
+                    continuation.resume(returning: .success(response))
                 } else {
-                    let etag = response.response?.headerValue(for: HeaderNames.etag)
-                    completion(Response(data: response.data, etag: etag), nil)
+                    continuation.resume(returning: .failure(APIRequestError.noResponseOrError))
                 }
             }
-
+        }
     }
+    
+    @discardableResult
+    public static func request(url: URL,
+                               method: HTTPMethod = .get,
+                               parameters: [String: String]? = nil,
+                               headers: HTTPHeaders = APIHeaders().defaultHeaders,
+                               httpBody: Data? = nil,
+                               timeoutInterval: TimeInterval = 60.0,
+                               callBackOnMainThread: Bool = false,
+                               completion: @escaping APIRequestCompletion) -> URLSessionDataTask {
+        os_log("Requesting %s", log: generalLog, type: .debug, url.absoluteString)
+        
+        let urlRequest = urlRequestFor(url: url,
+                                       method: method,
+                                       parameters: parameters,
+                                       headers: headers,
+                                       httpBody: httpBody,
+                                       timeoutInterval: timeoutInterval)
+        
+        let session = callBackOnMainThread ? mainThreadCallbackSession : defaultSession
 
+        let task = session.dataTask(with: urlRequest) { (data, response, error) in
+            
+            let httpResponse = response as? HTTPURLResponse
+            
+            os_log("Request for %s completed with response code: %s and headers %s",
+                   log: generalLog,
+                   type: .debug,
+                   url.absoluteString,
+                   String(describing: httpResponse?.statusCode),
+                   String(describing: httpResponse?.allHeaderFields))
+            
+            if let error = error {
+                completion(nil, error)
+            } else if let error = httpResponse?.validateStatusCode(statusCode: 200..<300) {
+                completion(nil, error)
+            } else {
+                var etag = httpResponse?.headerValue(for: APIHeaders.Name.etag)
+                
+                // Handle weak etags
+                etag = etag?.dropPrefix(prefix: "W/")
+                completion(Response(data: data, etag: etag, urlResponse: response), nil)
+            }
+        }
+
+        task.resume()
+        return task
+    }
+    
+    public static func urlRequestFor(url: URL,
+                                     method: HTTPMethod = .get,
+                                     parameters: [String: String]? = nil,
+                                     headers: HTTPHeaders = APIHeaders().defaultHeaders,
+                                     httpBody: Data? = nil,
+                                     timeoutInterval: TimeInterval = 60.0) -> URLRequest {
+        let url = url.addParams(parameters ?? [:])
+        var urlRequest = URLRequest.developerInitiated(url)
+        urlRequest.allHTTPHeaderFields = headers
+        urlRequest.httpMethod = method.rawValue
+        urlRequest.httpBody = httpBody
+        urlRequest.timeoutInterval = timeoutInterval
+        return urlRequest
+    }
 }
 
-fileprivate extension HTTPURLResponse {
-
-    func headerValue(for name: String) -> String? {
+public extension HTTPURLResponse {
+        
+    enum HTTPURLResponseError: Error {
+        case invalidStatusCode
+    }
+    
+    func validateStatusCode<S: Sequence>(statusCode acceptedStatusCodes: S) -> Error? where S.Iterator.Element == Int {
+        return acceptedStatusCodes.contains(statusCode) ? nil : HTTPURLResponseError.invalidStatusCode
+    }
+    
+    fileprivate func headerValue(for name: String) -> String? {
         let lname = name.lowercased()
         return allHeaderFields.filter { ($0.key as? String)?.lowercased() == lname }.first?.value as? String
     }
-
 }
-

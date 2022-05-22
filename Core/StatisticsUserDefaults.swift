@@ -17,30 +17,36 @@
 //  limitations under the License.
 //
 
-
 import Foundation
 
 public class StatisticsUserDefaults: StatisticsStore {
-    
+
     private let groupName: String
-    
+
     private struct Keys {
+        static let installDate = "com.duckduckgo.statistics.installdate.key"
         static let atb = "com.duckduckgo.statistics.atb.key"
-        static let retentionAtb = "com.duckduckgo.statistics.retentionatb.key"
+        static let searchRetentionAtb = "com.duckduckgo.statistics.retentionatb.key"
+        static let appRetentionAtb = "com.duckduckgo.statistics.appretentionatb.key"
+        static let variant = "com.duckduckgo.statistics.variant.key"
     }
-    
+
     private var userDefaults: UserDefaults? {
         return UserDefaults(suiteName: groupName)
     }
-    
-    public init(groupName: String =  "group.com.duckduckgo.statistics") {
+
+    public init() {
+        self.groupName = "\(Global.groupIdPrefix).statistics"
+    }
+
+    public init(groupName: String) {
         self.groupName = groupName
     }
-    
+
     public var hasInstallStatistics: Bool {
-        return atb != nil && retentionAtb != nil
+        return atb != nil
     }
-    
+
     public var atb: String? {
         get {
             return userDefaults?.string(forKey: Keys.atb)
@@ -49,14 +55,44 @@ public class StatisticsUserDefaults: StatisticsStore {
             userDefaults?.setValue(newValue, forKey: Keys.atb)
         }
     }
-
-    public var retentionAtb: String? {
+    
+    public var installDate: Date? {
         get {
-            return userDefaults?.string(forKey: Keys.retentionAtb)
+            guard let interval = userDefaults?.double(forKey: Keys.installDate), interval > 0 else {
+                return nil
+            }
+            return Date(timeIntervalSince1970: interval)
         }
         set {
-            userDefaults?.setValue(newValue, forKey: Keys.retentionAtb)
+            userDefaults?.setValue(newValue?.timeIntervalSince1970, forKey: Keys.installDate)
+        }
+    }
+
+    public var searchRetentionAtb: String? {
+        get {
+            return userDefaults?.string(forKey: Keys.searchRetentionAtb) ?? atb
+        }
+        set {
+            userDefaults?.setValue(newValue, forKey: Keys.searchRetentionAtb)
+        }
+    }
+    
+    public var appRetentionAtb: String? {
+        get {
+            return userDefaults?.string(forKey: Keys.appRetentionAtb) ?? atb
+        }
+        set {
+            userDefaults?.setValue(newValue, forKey: Keys.appRetentionAtb)
+        }
+    }
+
+    public var variant: String? {
+        get {
+            return userDefaults?.string(forKey: Keys.variant)
+        }
+
+        set {
+            userDefaults?.setValue(newValue, forKey: Keys.variant)
         }
     }
 }
-

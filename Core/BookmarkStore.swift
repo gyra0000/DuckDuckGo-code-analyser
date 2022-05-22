@@ -17,11 +17,20 @@
 //  limitations under the License.
 //
 
-
 import Foundation
 
-public protocol BookmarkStore {
-    var bookmarks: [Link]? { get set }
+/*
+ This is no longer used since the switch to core data for bookmark storage
+ It is kept for migration from the old store
+ */
+
+public protocol BookmarkStore: AnyObject {
+
+    var bookmarks: [Link] { get set }
+    var favorites: [Link] { get set }
     func addBookmark(_ bookmark: Link)
-    func updateFavicon(_ favicon: URL, forBookmarksWithUrl: URL)
+    func addFavorite(_ favorite: Link)
+    func contains(domain: String) -> Bool
+    func deleteAllData()
+
 }
