@@ -1,0 +1,66 @@
+/* 
+  Localizable.strings
+  DuckDuckGo
+
+  Copyright © 2017 DuckDuckGo. All rights reserved.
+ 
+  Licensed under the Apache License, Version 2.0 (the "License");
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+ 
+  http://www.apache.org/licenses/LICENSE-2.0
+ 
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.
+*/
+
+"app.info" = "%@ %@";
+"app.infoWithBuild" = "%@ %@ (%@)";
+"app.authentication.unlock" = "Unlock DuckDuckGo";
+"home.link.title" = "DuckDuckGo Home";
+"search.hint.duckduckgo" = "Search or type URL";
+"web.session.clear" = "Session cleared";
+"web.url.save.done" = "Bookmark saved";
+"web.page.load.failed" = "DuckDuckGo cannot load this page.";
+
+"tabswitcher.title.tabs" = "Private Tabs";
+"tabswitcher.title.notabs" = "No Tabs";
+
+"action.title.pasteAndGo" = "Paste & Go";
+"action.title.add" = "Add";
+"action.title.save" = "Save";
+"action.title.cancel" = "Cancel";
+"action.title.newTab" = "New Tab";
+"action.title.newTabForUrl" = "Open in New Tab";
+"action.title.forgetAll" = "Clear Tabs and Data";
+"action.title.forgetAllDone" = "Tabs and data cleared";
+"action.title.open" = "Open";
+"action.title.refresh" = "Refresh";
+"action.title.readingList" = "Add to Reading List";
+"action.title.copy" = "Copy";
+"action.title.share"= "Share...";
+"action.title.add.to.whitelist" = "Add to Whitelist";
+"action.title.remove.from.whitelist" = "Remove from Whitelist";
+"action.title.remove.bookmark" = "Remove Bookmark";
+"action.title.save.bookmark" = "Add to Bookmarks";
+"action.title.settings" = "Settings...";
+"alert.title.save.bookmark" = "Save Bookmark";
+"alert.title.edit.bookmark" = "Edit Bookmark";
+
+"alert.title.add.to.whitelist" = "Add to Whitelist";
+"alert.title.add.to.whitelist.placeholder" = "www.example.com";
+
+"feedbackemail.subject" = "DuckDuckGo for iOS feedback";
+"feedbackemail.body" = "I'm running %@ on an %@ %@. Here's my feedback:\n";
+
+"navigation.title.edit" = "Edit";
+
+"monitoring.connection.secure" = "Secure connection";
+"monitoring.connection.unsecured" = "Unsecured connection";
+"monitoring.sitegrade.a" = "A";
+"monitoring.sitegrade.b" = "B";
+"monitoring.sitegrade.c" = "C";
+"monitoring.sitegrade.d" = "D";
